@@ -173,9 +173,20 @@ debug-tools/ export-ignore
 *.zip export-ignore
 *.tar.gz export-ignore
 
-# ===== work-notes 専用 =====
+# ===== andw-work-notes 専用 =====
 includes/class-ofwn-updater.php export-ignore
-updates/ export-ignore
 UNINSTALL-CHECKLIST.md export-ignore
 update-changelog.sh export-ignore
 .distignore export-ignore
+
+# 開発・ドキュメントファイル（配布除外）
+DEVELOPER.md export-ignore
+CONTRIBUTING.md export-ignore
+SECURITY.md export-ignore
+CHANGELOG.md export-ignore
+README.md export-ignore
+.editorconfig export-ignore
+
+# 開発用ディレクトリ（配布除外）
+zips/ export-ignore
+.github/ export-ignore

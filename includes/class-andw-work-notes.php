@@ -944,7 +944,7 @@ class ANDW_Work_Notes {
         
         // コンソール出力（ブラウザ開発者ツールで確認可能）
         if (!$has_content) {
-            $console_msg = 'OFWN: No content detected - all fields empty';
+            $console_msg = 'ANDW: No content detected - all fields empty';
             $fields_debug = 'work_title=' . ($work_title_check ?: 'empty') . ', work_content=' . ($work_content_check ?: 'empty');
             
             // JavaScriptコンソール出力用のスクリプト追加
@@ -986,7 +986,7 @@ class ANDW_Work_Notes {
                     
                     // コンソール出力
                     add_action('admin_footer', function() use ($post_id) {
-                        echo '<script>console.warn("OFWN: REST request with all meta empty, retry flagged for post ' . esc_js($post_id) . '");</script>';
+                        echo '<script>console.warn("ANDW: REST request with all meta empty, retry flagged for post ' . esc_js($post_id) . '");</script>';
                     });
                     
                     // 次回save_postで再処理するためのフラグを設定
@@ -1011,7 +1011,7 @@ class ANDW_Work_Notes {
             
             // コンソール出力
             add_action('admin_footer', function() use ($post_id) {
-                echo '<script>console.info("OFWN: Processing delayed CPT creation for post ' . esc_js($post_id) . '");</script>';
+                echo '<script>console.info("ANDW: Processing delayed CPT creation for post ' . esc_js($post_id) . '");</script>';
             });
             
             delete_post_meta($post_id, '_andw_pending_cpt_creation');
