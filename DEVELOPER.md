@@ -9,7 +9,7 @@ This document outlines the development workflow, quality assurance procedures, b
 ### Prerequisites
 
 * **PHP**: 8.0+ (recommended: 8.1+)
-* **WordPress**: 6.0+ (tested up to 6.8)
+* **WordPress**: 6.0+ (tested up to 6.7)
 * **Composer**: For dependency management
 * **Node.js**: 16+ (for future asset compilation)
 * **Git**: Version control
@@ -18,14 +18,14 @@ This document outlines the development workflow, quality assurance procedures, b
 
 ```bash
 # Clone repository
-git clone [repository-url] work-notes
-cd work-notes
+git clone [repository-url] andw-work-notes
+cd andw-work-notes
 
 # Install development dependencies
 composer install
 
 # Link to WordPress installation
-ln -s $(pwd) /path/to/wordpress/wp-content/plugins/work-notes
+ln -s $(pwd) /path/to/wordpress/wp-content/plugins/andw-work-notes
 
 # Activate plugin in WordPress admin
 ```
@@ -54,7 +54,7 @@ vendor/bin/phpcs --config-set installed_paths vendor/wp-coding-standards/wpcs/
 vendor/bin/phpcs --standard=WordPress .
 
 # Check specific files
-vendor/bin/phpcs --standard=WordPress work-notes.php
+vendor/bin/phpcs --standard=WordPress andw-work-notes.php
 
 # Check with detailed report
 vendor/bin/phpcs --standard=WordPress --report=full .
@@ -110,16 +110,16 @@ composer require --dev wordpress/plugin-check
 
 ```bash
 # Run via WP-CLI
-wp plugin-check check work-notes
+wp plugin-check check andw-work-notes
 
 # Run specific checks
-wp plugin-check check work-notes --checks=plugin_header,file_type
+wp plugin-check check andw-work-notes --checks=plugin_header,file_type
 
 # Run with detailed output
-wp plugin-check check work-notes --format=table
+wp plugin-check check andw-work-notes --format=table
 
 # Check for WordPress.org compliance
-wp plugin-check check work-notes --include-experimental
+wp plugin-check check andw-work-notes --include-experimental
 ```
 
 #### Critical Plugin Check Items
@@ -229,10 +229,10 @@ echo "Version updated to $NEW_VERSION"
 
 ```bash
 # Create distribution ZIP using git archive
-git archive --format=zip --prefix=work-notes/ HEAD > work-notes-v1.0.5.zip
+git archive --format=zip --prefix=andw-work-notes/ HEAD > andw-work-notes-v1.0.6.zip
 
 # Verify contents (should exclude development files)
-unzip -l work-notes-v1.0.5.zip | head -20
+unzip -l andw-work-notes-v1.0.6.zip | head -20
 ```
 
 #### .gitattributes Configuration
@@ -327,7 +327,7 @@ jobs:
       - uses: actions/checkout@v3
       - name: Create distribution ZIP
         run: |
-          git archive --format=zip --prefix=work-notes/ HEAD > work-notes.zip
+          git archive --format=zip --prefix=andw-work-notes/ HEAD > andw-work-notes.zip
       - name: Create GitHub Release
         uses: actions/create-release@v1
         env:
@@ -343,8 +343,8 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ./work-notes.zip
-          asset_name: work-notes.zip
+          asset_path: ./andw-work-notes.zip
+          asset_name: andw-work-notes.zip
           asset_content_type: application/zip
 ```
 
@@ -352,7 +352,7 @@ jobs:
 
 ```bash
 # SVN setup for WordPress.org
-svn co https://plugins.svn.wordpress.org/work-notes wp-org-svn
+svn co https://plugins.svn.wordpress.org/andw-work-notes wp-org-svn
 
 # Automated deployment script
 #!/bin/bash
@@ -399,10 +399,75 @@ svn commit -m "Deploy version $VERSION"
         "check": "phpcs --standard=WordPress .",
         "fix": "phpcbf --standard=WordPress .",
         "test": "phpunit",
-        "build": "git archive --format=zip --prefix=work-notes/ HEAD > work-notes.zip"
+        "build": "git archive --format=zip --prefix=andw-work-notes/ HEAD > andw-work-notes.zip"
     }
 }
 ```
+
+---
+
+## 🚀 CI/CD Integration Notes
+
+### Automated Quality Assurance
+
+To implement continuous integration for the andW Work Notes plugin:
+
+#### GitHub Actions Workflow
+
+```yaml
+name: Plugin Quality Check
+on: [push, pull_request]
+
+jobs:
+  quality-check:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        php-version: ['8.0', '8.1', '8.2']
+        wordpress-version: ['6.0', '6.7']
+
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php-version }}
+      - name: Install Composer Dependencies
+        run: composer install --no-dev --optimize-autoloader
+      - name: WordPress Coding Standards
+        run: vendor/bin/phpcs --standard=WordPress .
+      - name: PHP Syntax Check
+        run: find . -name "*.php" -not -path "./vendor/*" -print0 | xargs -0 -n1 -P4 php -l
+```
+
+#### Automated WordPress.org Deployment
+
+```yaml
+name: Deploy to WordPress.org
+on:
+  release:
+    types: [published]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: WordPress Plugin Deploy
+        uses: 10up/action-wordpress-plugin-deploy@stable
+        env:
+          SVN_USERNAME: ${{ secrets.SVN_USERNAME }}
+          SVN_PASSWORD: ${{ secrets.SVN_PASSWORD }}
+          SLUG: andw-work-notes
+```
+
+### Future CI/CD Enhancements
+
+- **Automated Testing**: Unit tests with PHPUnit
+- **Security Scanning**: Integration with PHPCS Security audit
+- **Performance Testing**: Database query analysis
+- **Multi-WordPress Testing**: Compatibility matrix testing
+- **Plugin Check Integration**: Automated WordPress.org compliance verification
 
 ---
 

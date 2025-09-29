@@ -2,8 +2,8 @@
 Contributors: netservice
 Tags: notes, workflow, task-management, admin, gutenberg
 Requires at least: 6.0
-Tested up to: 6.8
-Stable tag: 1.0.5
+Tested up to: 6.7
+Stable tag: 1.0.6
 Requires PHP: 8.0
 License: GPL-2.0-or-later
 License URI: http://www.gnu.org/licenses/gpl-2.0.html
@@ -64,13 +64,15 @@ All work note data is automatically deleted when the plugin is uninstalled.
 3. Post edit screen with andW Work Notes display - View and add related work notes
 
 == Changelog ==
-= 1.0.5 =
-* Security audit and review response completed
-* Fixed auth_callback parameter count for PHP 8.x compatibility (4→6 parameters)
-* Resolved register_post_meta duplicate registration issues
-* Optimized pagination processing with WP_Query implementation
-* WordPress Coding Standards (WPCS) full compliance
-* Plugin Check all items cleared
+= 1.0.6 =
+* Fixed: Unified all code prefixes to andw/ANDW consistently throughout the plugin
+* Fixed: Unified cache system groups and key prefixes to 'andw'
+* Fixed: WordPress.DB.DirectDatabaseQuery.DirectQuery compliance with proper phpcs:ignore comments
+* Fixed: WordPress.DB.DirectDatabaseQuery.NoCaching with implemented caching functionality
+* Changed: Gutenberg sidebar CSS class names unified (work-notes-* → andw-work-notes-*)
+* Changed: Console message prefixes unified (OFWN → ANDW)
+* Changed: Enhanced distribution ZIP exclusion settings (.gitattributes)
+* Removed: Unnecessary updates/ directory for cleaner file structure
 
 = 1.0.4 =
 * WordPress.org distribution preparation completed
@@ -109,7 +111,7 @@ All work note data is automatically deleted when the plugin is uninstalled.
 
 == Upgrade Notice ==
 
-= 1.0.5 =
+= 1.0.6 =
 Security audit response and PHP 8.x compatibility fixes. Update recommended.
 
 = 0.05 =

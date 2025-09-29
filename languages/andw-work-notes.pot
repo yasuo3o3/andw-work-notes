@@ -2,7 +2,7 @@
 # This file is distributed under the same license as the andW Work Notes（作業メモ） package.
 msgid ""
 msgstr ""
-"Project-Id-Version: andW Work Notes（作業メモ） 1.0.5\n"
+"Project-Id-Version: andW Work Notes（作業メモ） 1.0.6\n"
 "Report-Msgid-Bugs-To: https://netservice.jp/\n"
 "POT-Creation-Date: 2024-08-26 15:00+0000\n"
 "MIME-Version: 1.0\n"

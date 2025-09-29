@@ -2,6 +2,23 @@
 
 All notable changes to this project will be documented in this file.
 
+## v1.0.6 - 2025-09-29
+
+### MAJOR IMPROVEMENTS
+* **Prefix Unification**: All code unified to use andw/ANDW prefix consistently
+* **Cache System Unification**: Cache groups and key prefixes unified to 'andw'
+* **Code Quality Enhancement**: Review and fixes for naming conventions, cache, and consistency
+
+### COMPLIANCE & STANDARDS
+* **WordPress.DB.DirectDatabaseQuery.DirectQuery**: Added proper phpcs:ignore comments for cleanup queries
+* **WordPress.DB.DirectDatabaseQuery.NoCaching**: Implemented caching functionality for database queries
+* **Gutenberg CSS Classes**: Unified CSS class names (work-notes-* → andw-work-notes-*)
+* **Console Messages**: Unified console message prefixes (OFWN → ANDW)
+
+### FILE MANAGEMENT
+* **Distribution ZIP**: Enhanced .gitattributes for proper file exclusion
+* **Cleanup**: Removed unnecessary updates/ directory
+
 ## v1.0.5 - 2025-09-22
 
 ### CRITICAL FIXES

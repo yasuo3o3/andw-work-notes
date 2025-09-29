@@ -3,6 +3,23 @@ All notable changes to this project will be documented in this file.
 This project adheres to [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and uses Semantic Versioning.
 
 ## [Unreleased]
+
+## [1.0.6] - 2025-09-29
+### Fixed
+- プレフィックス統一：すべてのコード内で andw/ANDW プレフィックスに統一
+- キャッシュシステム統一：キャッシュグループとキーのプレフィックスを andw に統一
+- WordPress.DB.DirectDatabaseQuery.DirectQuery コンプライアンス対応
+- WordPress.DB.DirectDatabaseQuery.NoCaching キャッシュ機能追加
+
+### Changed
+- Gutenberg サイドバー CSS クラス名統一（work-notes-* → andw-work-notes-*）
+- コンソールメッセージプレフィックス統一（OFWN → ANDW）
+- 配布ZIP除外設定強化（.gitattributes）
+
+### Code Quality
+- レビューと修正対応完了：命名規則・キャッシュ・コード品質の一貫性向上
+- 不要な updates/ ディレクトリ削除
+
 ## [1.0.5] - 2025-09-22
 ### Fixed
 - セキュリティ監査とレビュー対応完了

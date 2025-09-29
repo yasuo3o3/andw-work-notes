@@ -2,9 +2,9 @@
 
 WordPress plugin for recording and managing andW work notes related to client instructions and site updates within your WordPress admin.
 
-**Version:** 1.0.5
+**Version:** 1.0.6
 **License:** GPL-2.0-or-later
-**WordPress.org Distribution:** This plugin is prepared for submission to the WordPress.org Plugin Directory with full compliance to WordPress coding standards and security requirements.
+**WordPress.org Distribution:** This plugin is prepared for submission to the WordPress.org Plugin Directory with full compliance to WordPress coding standards and security requirements. Latest version (1.0.6) includes comprehensive code quality improvements and unified prefix conventions.
 
 ---
 
@@ -58,7 +58,7 @@ WordPress plugin for recording and managing andW work notes related to client in
 
 - **WordPress**: 6.0 or higher
 - **PHP**: 8.0 or higher (8.1+ recommended)
-- **Tested up to**: WordPress 6.8
+- **Tested up to**: WordPress 6.7
 
 ---
 
