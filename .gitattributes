@@ -178,3 +178,4 @@ includes/class-ofwn-updater.php export-ignore
 updates/ export-ignore
 UNINSTALL-CHECKLIST.md export-ignore
 update-changelog.sh export-ignore
+.distignore export-ignore

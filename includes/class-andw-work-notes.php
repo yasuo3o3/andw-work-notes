@@ -113,15 +113,15 @@ class ANDW_Work_Notes {
     public function register_cpt() {
         register_post_type(self::CPT, [
             'labels' => [
-                'name' => __('作業メモ', 'work-notes'),
-                'singular_name' => __('作業メモ', 'work-notes'),
-                'add_new' => __('新規メモ', 'work-notes'),
-                'add_new_item' => __('作業メモを追加', 'work-notes'),
-                'edit_item' => __('作業メモを編集', 'work-notes'),
-                'new_item' => __('新規作業メモ', 'work-notes'),
-                'view_item' => __('作業メモを表示', 'work-notes'),
-                'search_items' => __('作業メモを検索', 'work-notes'),
-                'menu_name' => __('作業メモ', 'work-notes'),
+                'name' => __('作業メモ', 'andw-work-notes'),
+                'singular_name' => __('作業メモ', 'andw-work-notes'),
+                'add_new' => __('新規メモ', 'andw-work-notes'),
+                'add_new_item' => __('作業メモを追加', 'andw-work-notes'),
+                'edit_item' => __('作業メモを編集', 'andw-work-notes'),
+                'new_item' => __('新規作業メモ', 'andw-work-notes'),
+                'view_item' => __('作業メモを表示', 'andw-work-notes'),
+                'search_items' => __('作業メモを検索', 'andw-work-notes'),
+                'menu_name' => __('作業メモ', 'andw-work-notes'),
             ],
             'public' => false,
             'show_ui' => true,
@@ -217,18 +217,18 @@ class ANDW_Work_Notes {
             'autoload' => false
         ]);
 
-        add_settings_section('andw_section_main', __('マスター管理', 'work-notes'), '__return_false', 'andw_settings');
+        add_settings_section('andw_section_main', __('マスター管理', 'andw-work-notes'), '__return_false', 'andw_settings');
 
-        add_settings_field(self::OPT_REQUESTERS, __('依頼元マスター（1行1件）', 'work-notes'), function(){
+        add_settings_field(self::OPT_REQUESTERS, __('依頼元マスター（1行1件）', 'andw-work-notes'), function(){
             $v = get_option(self::OPT_REQUESTERS, []);
             echo '<textarea name="'.esc_attr(self::OPT_REQUESTERS).'[]" rows="3" style="width:600px;">'.esc_textarea(implode("\n", $v))."</textarea>";
-            echo '<p class="description">' . esc_html__('ここに入力した内容が「依頼元」のセレクトに表示されます。', 'work-notes') . '</p>';
+            echo '<p class="description">' . esc_html__('ここに入力した内容が「依頼元」のセレクトに表示されます。', 'andw-work-notes') . '</p>';
         }, 'andw_settings', 'andw_section_main');
 
-        add_settings_field(self::OPT_WORKERS, __('担当者マスター（1行1件）', 'work-notes'), function(){
+        add_settings_field(self::OPT_WORKERS, __('担当者マスター（1行1件）', 'andw-work-notes'), function(){
             $v = get_option(self::OPT_WORKERS, $this->default_workers());
             echo '<textarea name="'.esc_attr(self::OPT_WORKERS).'[]" rows="3" style="width:600px;">'.esc_textarea(implode("\n", $v))."</textarea>";
-            echo '<p class="description">' . esc_html__('ここに入力した内容が「担当者」のセレクトに表示されます。', 'work-notes') . '</p>';
+            echo '<p class="description">' . esc_html__('ここに入力した内容が「担当者」のセレクトに表示されます。', 'andw-work-notes') . '</p>';
         }, 'andw_settings', 'andw_section_main');
 
     }
@@ -257,13 +257,13 @@ class ANDW_Work_Notes {
         if (!current_user_can('manage_options')) return;
         ?>
         <div class="wrap">
-            <h1><?php esc_html_e('作業メモ設定', 'work-notes'); ?></h1>
+            <h1><?php esc_html_e('作業メモ設定', 'andw-work-notes'); ?></h1>
             
             <form method="post" action="options.php">
                 <?php
                 settings_fields('andw_settings');
                 do_settings_sections('andw_settings');
-                submit_button(__('保存', 'work-notes'));
+                submit_button(__('保存', 'andw-work-notes'));
                 ?>
             </form>
             
@@ -276,14 +276,14 @@ class ANDW_Work_Notes {
     public function add_meta_boxes() {
         // 作業メモCPTはそのまま維持（既存機能の互換性）
         if (!function_exists('use_block_editor_for_post_type') || !use_block_editor_for_post_type(self::CPT)) {
-            add_meta_box('andw_fields', __('作業メモ属性', 'work-notes'), [$this, 'box_note_fields'], self::CPT, 'side', 'default');
+            add_meta_box('andw_fields', __('作業メモ属性', 'andw-work-notes'), [$this, 'box_note_fields'], self::CPT, 'side', 'default');
         }
         
         // 投稿と固定ページにClassic Editor時のみメタボックス追加
         $target_post_types = ['post', 'page'];
         foreach ($target_post_types as $post_type) {
             if (!function_exists('use_block_editor_for_post_type') || !use_block_editor_for_post_type($post_type)) {
-                add_meta_box('andw_parent', __('作業メモ', 'work-notes'), [$this, 'box_parent_notes'], $post_type, 'normal', 'default');
+                add_meta_box('andw_parent', __('作業メモ', 'andw-work-notes'), [$this, 'box_parent_notes'], $post_type, 'normal', 'default');
             }
         }
     }
@@ -328,39 +328,39 @@ class ANDW_Work_Notes {
         $wrk_opts = get_option(self::OPT_WORKERS, $this->default_workers());
 
         ?>
-        <p><label><?php esc_html_e('対象タイプ', 'work-notes'); ?><br>
+        <p><label><?php esc_html_e('対象タイプ', 'andw-work-notes'); ?><br>
             <select name="andw_target_type">
-                <option value=""><?php esc_html_e('（任意）', 'work-notes'); ?></option>
-                <option value="post" <?php selected($target_type,'post');?>><?php esc_html_e('投稿/固定ページ', 'work-notes'); ?></option>
-                <option value="site" <?php selected($target_type,'site');?>><?php esc_html_e('サイト全体/設定/テーマ', 'work-notes'); ?></option>
-                <option value="other" <?php selected($target_type,'other');?>><?php esc_html_e('その他', 'work-notes'); ?></option>
+                <option value=""><?php esc_html_e('（任意）', 'andw-work-notes'); ?></option>
+                <option value="post" <?php selected($target_type,'post');?>><?php esc_html_e('投稿/固定ページ', 'andw-work-notes'); ?></option>
+                <option value="site" <?php selected($target_type,'site');?>><?php esc_html_e('サイト全体/設定/テーマ', 'andw-work-notes'); ?></option>
+                <option value="other" <?php selected($target_type,'other');?>><?php esc_html_e('その他', 'andw-work-notes'); ?></option>
             </select>
         </label></p>
 
-        <p><label><?php esc_html_e('対象ID（投稿IDなど）', 'work-notes'); ?><br>
+        <p><label><?php esc_html_e('対象ID（投稿IDなど）', 'andw-work-notes'); ?><br>
             <input type="text" name="andw_target_id" value="<?php echo esc_attr($target_id);?>" style="width:100%;">
         </label></p>
 
 
         <!-- 作業タイトル・作業内容のUIは撤去（標準のタイトル欄・本文エディタを使用） -->
 
-        <p class="ofwn-inline"><label><?php esc_html_e('依頼元', 'work-notes'); ?></label><br>
-            <?php $this->render_select_with_custom('andw_requester', $req_opts, $requester, __('依頼元を手入力', 'work-notes')); ?>
+        <p class="ofwn-inline"><label><?php esc_html_e('依頼元', 'andw-work-notes'); ?></label><br>
+            <?php $this->render_select_with_custom('andw_requester', $req_opts, $requester, __('依頼元を手入力', 'andw-work-notes')); ?>
         </p>
 
-        <p class="ofwn-inline"><label><?php esc_html_e('担当者', 'work-notes'); ?></label><br>
-            <?php $this->render_select_with_custom('andw_worker', $wrk_opts, $worker, __('担当者を手入力', 'work-notes')); ?>
+        <p class="ofwn-inline"><label><?php esc_html_e('担当者', 'andw-work-notes'); ?></label><br>
+            <?php $this->render_select_with_custom('andw_worker', $wrk_opts, $worker, __('担当者を手入力', 'andw-work-notes')); ?>
         </p>
 
-        <p class="ofwn-inline"><label><?php esc_html_e('ステータス', 'work-notes'); ?><br>
+        <p class="ofwn-inline"><label><?php esc_html_e('ステータス', 'andw-work-notes'); ?><br>
             <select name="andw_status">
-                <option value="依頼" <?php selected($status,'依頼');?>><?php esc_html_e('依頼', 'work-notes'); ?></option>
-                <option value="対応中" <?php selected($status,'対応中');?>><?php esc_html_e('対応中', 'work-notes'); ?></option>
-                <option value="完了" <?php selected($status,'完了');?>><?php esc_html_e('完了', 'work-notes'); ?></option>
+                <option value="依頼" <?php selected($status,'依頼');?>><?php esc_html_e('依頼', 'andw-work-notes'); ?></option>
+                <option value="対応中" <?php selected($status,'対応中');?>><?php esc_html_e('対応中', 'andw-work-notes'); ?></option>
+                <option value="完了" <?php selected($status,'完了');?>><?php esc_html_e('完了', 'andw-work-notes'); ?></option>
             </select>
         </label></p>
 
-        <p class="ofwn-inline"><label><?php esc_html_e('実施日', 'work-notes'); ?><br>
+        <p class="ofwn-inline"><label><?php esc_html_e('実施日', 'andw-work-notes'); ?><br>
             <input type="date" name="andw_work_date" value="<?php echo esc_attr($date);?>">
         </label></p>
         <?php
@@ -475,10 +475,10 @@ class ANDW_Work_Notes {
     public function cols($cols) {
         $new = [];
         $new['cb'] = $cols['cb'] ?? '';
-        $new['title'] = __('タイトル', 'work-notes');
+        $new['title'] = __('タイトル', 'andw-work-notes');
         // 新規追加: 作業タイトルと作業内容列をタイトル列の直後に追加
-        $new['work_title'] = __('作業タイトル', 'work-notes');
-        $new['work_content'] = __('作業内容', 'work-notes');
+        $new['work_title'] = __('作業タイトル', 'andw-work-notes');
+        $new['work_content'] = __('作業内容', 'andw-work-notes');
         $new['andw_requester'] = '依頼元';
         $new['andw_assignee'] = '担当者';
         $new['andw_target'] = '対象';
@@ -493,7 +493,7 @@ class ANDW_Work_Notes {
         if ($col === 'work_title') {
             $post_title = get_post_field('post_title', $post_id);
             $fallback_title = get_post_meta($post_id, '_andw_work_title', true) ?: get_post_meta($post_id, '_andw_target_label', true);
-            $display_title = $post_title ?: $fallback_title ?: __('データなし', 'work-notes');
+            $display_title = $post_title ?: $fallback_title ?: __('データなし', 'andw-work-notes');
             echo esc_html($display_title);
         }
         // 作業内容列の表示処理（post_contentを使用、旧メタからフォールバック）
@@ -702,11 +702,11 @@ class ANDW_Work_Notes {
                 echo '<span class="ofwn-badge ' . esc_attr($status==='完了'?'done':'') . '">' . esc_html($status ?: '—') . '</span><br>';
                 echo wp_kses_post(wpautop($n->post_content));
                 echo '<small>依頼元: '.esc_html($req ?: '—').' / 担当: '.esc_html($worker ?: '—').' / 実施日: '.esc_html($date ?: '—').'</small>';
-                echo ' / <a href="'.esc_url(get_edit_post_link($n->ID)).'">' . esc_html__('編集', 'work-notes') . '</a>';
+                echo ' / <a href="'.esc_url(get_edit_post_link($n->ID)).'">' . esc_html__('編集', 'andw-work-notes') . '</a>';
                 echo '</div>';
             }
         } else {
-            echo '<p>' . esc_html__('このコンテンツに紐づく作業メモはまだありません。', 'work-notes') . '</p>';
+            echo '<p>' . esc_html__('このコンテンツに紐づく作業メモはまだありません。', 'andw-work-notes') . '</p>';
         }
         echo '</div>';
 
@@ -714,28 +714,28 @@ class ANDW_Work_Notes {
         $wrk_opts = get_option(self::OPT_WORKERS, $this->default_workers());
         ?>
         <hr>
-        <h4><?php esc_html_e('この投稿に作業メモを追加', 'work-notes'); ?></h4>
+        <h4><?php esc_html_e('この投稿に作業メモを追加', 'andw-work-notes'); ?></h4>
 
-        <p><label><?php esc_html_e('依頼元', 'work-notes'); ?></label><br>
+        <p><label><?php esc_html_e('依頼元', 'andw-work-notes'); ?></label><br>
             <?php $this->render_select_with_custom('andw_quick_requester', $req_opts, ''); ?>
         </p>
 
-        <p><label><?php esc_html_e('内容（作業メモ本文）', 'work-notes'); ?><br><textarea name="andw_quick_content" rows="4" style="width:100%;"></textarea></label></p>
+        <p><label><?php esc_html_e('内容（作業メモ本文）', 'andw-work-notes'); ?><br><textarea name="andw_quick_content" rows="4" style="width:100%;"></textarea></label></p>
 
         <p class="ofwn-inline">
-            <label><?php esc_html_e('ステータス', 'work-notes'); ?>
+            <label><?php esc_html_e('ステータス', 'andw-work-notes'); ?>
                 <select name="andw_quick_status">
-                    <option value="依頼"><?php esc_html_e('依頼', 'work-notes'); ?></option>
-                    <option value="対応中"><?php esc_html_e('対応中', 'work-notes'); ?></option>
-                    <option value="完了"><?php esc_html_e('完了', 'work-notes'); ?></option>
+                    <option value="依頼"><?php esc_html_e('依頼', 'andw-work-notes'); ?></option>
+                    <option value="対応中"><?php esc_html_e('対応中', 'andw-work-notes'); ?></option>
+                    <option value="完了"><?php esc_html_e('完了', 'andw-work-notes'); ?></option>
                 </select>
             </label>
 
-            <label><?php esc_html_e('実施日', 'work-notes'); ?>
+            <label><?php esc_html_e('実施日', 'andw-work-notes'); ?>
                 <input type="date" name="andw_quick_date" value="<?php echo esc_attr(current_time('Y-m-d'));?>">
             </label>
 
-            <label><?php esc_html_e('担当者', 'work-notes'); ?></label>
+            <label><?php esc_html_e('担当者', 'andw-work-notes'); ?></label>
             <?php $this->render_select_with_custom('andw_quick_worker', $wrk_opts, wp_get_current_user()->display_name); ?>
         </p>
         <?php
@@ -1156,7 +1156,7 @@ class ANDW_Work_Notes {
         $content_parts = [];
         
         /* translators: %1$s: post title */
-        $content_parts[] = sprintf(__('投稿「%1$s」の作業メモを右サイドバーから作成しました。', 'work-notes'), esc_html(get_the_title($post)));
+        $content_parts[] = sprintf(__('投稿「%1$s」の作業メモを右サイドバーから作成しました。', 'andw-work-notes'), esc_html(get_the_title($post)));
         
         if (!empty($meta_payload['requester'])) {
             $content_parts[] = "依頼元: " . $meta_payload['requester'];
@@ -1224,8 +1224,8 @@ class ANDW_Work_Notes {
     public function add_list_page() {
         add_submenu_page(
             'edit.php?post_type=' . self::CPT,
-            __('作業一覧', 'work-notes'),
-            __('作業一覧', 'work-notes'),
+            __('作業一覧', 'andw-work-notes'),
+            __('作業一覧', 'andw-work-notes'),
             'edit_posts',
             'ofwn-list',
             [$this, 'render_list_page']
@@ -1245,11 +1245,11 @@ class ANDW_Work_Notes {
         ]);
         $table->prepare_items();
 
-        echo '<div class="wrap"><h1 class="wp-heading-inline">' . esc_html__('作業一覧', 'work-notes') . '</h1>';
+        echo '<div class="wrap"><h1 class="wp-heading-inline">' . esc_html__('作業一覧', 'andw-work-notes') . '</h1>';
         echo '<form method="get">';
         echo '<input type="hidden" name="post_type" value="'.esc_attr(self::CPT).'">';
         echo '<input type="hidden" name="page" value="ofwn-list">';
-        $table->search_box(__('キーワード検索', 'work-notes'), 'ofwn-search');
+        $table->search_box(__('キーワード検索', 'andw-work-notes'), 'ofwn-search');
         $table->views();
         $table->display();
         echo '</form></div>';
@@ -1440,11 +1440,11 @@ class ANDW_Work_Notes {
     public function ajax_get_sidebar_data() {
         $nonce = isset($_POST['nonce']) ? sanitize_text_field(wp_unslash($_POST['nonce'])) : '';
         if (!wp_verify_nonce($nonce, 'andw_sidebar_nonce')) {
-            wp_send_json_error(['message' => __('セキュリティチェックに失敗しました。', 'work-notes')]);
+            wp_send_json_error(['message' => __('セキュリティチェックに失敗しました。', 'andw-work-notes')]);
         }
         
         if (!current_user_can('edit_posts')) {
-            wp_send_json_error(['message' => __('この操作を実行する権限がありません。', 'work-notes')]);
+            wp_send_json_error(['message' => __('この操作を実行する権限がありません。', 'andw-work-notes')]);
         }
         
         $data = [
@@ -2064,7 +2064,7 @@ class ANDW_Work_Notes {
             if (defined('WP_DEBUG_LOG') && WP_DEBUG_LOG) {
                 andw_log('Nonce verification failed: received="' . $nonce . '"');
             }
-            wp_send_json_error(['message' => __('セキュリティチェックに失敗しました。', 'work-notes')]);
+            wp_send_json_error(['message' => __('セキュリティチェックに失敗しました。', 'andw-work-notes')]);
         }
         
         // パラメータ取得
@@ -2077,12 +2077,12 @@ class ANDW_Work_Notes {
         $work_date = sanitize_text_field(wp_unslash($_POST['work_date'] ?? ''));
         
         if (!$post_id || (!$work_title && !$work_content)) {
-            wp_send_json_error(['message' => __('必要なパラメータが不足しています。', 'work-notes')]);
+            wp_send_json_error(['message' => __('必要なパラメータが不足しています。', 'andw-work-notes')]);
         }
         
         // 権限チェック
         if (!current_user_can('edit_post', $post_id)) {
-            wp_send_json_error(['message' => __('この投稿を編集する権限がありません。', 'work-notes')]);
+            wp_send_json_error(['message' => __('この投稿を編集する権限がありません。', 'andw-work-notes')]);
         }
         
         try {
@@ -2113,7 +2113,7 @@ class ANDW_Work_Notes {
                 
                 if ($latest_title === $work_title && $latest_content === $work_content) {
                     wp_send_json_success([
-                        'message' => __('同じ内容の作業メモが既に存在します。', 'work-notes'),
+                        'message' => __('同じ内容の作業メモが既に存在します。', 'andw-work-notes'),
                         'note_id' => $latest_note->ID,
                         'duplicate' => true
                     ]);
@@ -2137,7 +2137,7 @@ class ANDW_Work_Notes {
             
             if (is_wp_error($note_id)) {
                 /* translators: %1$s: error message from WordPress */
-                wp_send_json_error(['message' => sprintf(__('CPT作成に失敗: %1$s', 'work-notes'), esc_html($note_id->get_error_message()))]);
+                wp_send_json_error(['message' => sprintf(__('CPT作成に失敗: %1$s', 'andw-work-notes'), esc_html($note_id->get_error_message()))]);
             }
             
             // CPTメタデータを設定
@@ -2163,7 +2163,7 @@ class ANDW_Work_Notes {
             }
             
             wp_send_json_success([
-                'message' => __('作業メモを作成しました。', 'work-notes'),
+                'message' => __('作業メモを作成しました。', 'andw-work-notes'),
                 'note_id' => $note_id,
                 'note_title' => $note_title,
                 'note_content' => $note_content
@@ -2174,7 +2174,7 @@ class ANDW_Work_Notes {
                 andw_log('AJAX_CREATE] ERROR: ' . $e->getMessage());
             }
             /* translators: %1$s: PHP exception message */
-            wp_send_json_error(['message' => sprintf(__('エラーが発生しました: %1$s', 'work-notes'), esc_html($e->getMessage()))]);
+            wp_send_json_error(['message' => sprintf(__('エラーが発生しました: %1$s', 'andw-work-notes'), esc_html($e->getMessage()))]);
         }
     }
     

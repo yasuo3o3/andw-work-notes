@@ -1,6 +1,6 @@
-# Work Notes
+# andW Work Notes
 
-WordPress plugin for recording and managing work notes related to client instructions and site updates within your WordPress admin.
+WordPress plugin for recording and managing andW work notes related to client instructions and site updates within your WordPress admin.
 
 **Version:** 1.0.5
 **License:** GPL-2.0-or-later
@@ -10,7 +10,7 @@ WordPress plugin for recording and managing work notes related to client instruc
 
 ## ✨ Features
 
-- **Work Notes Management**: Record work notes linked to posts and pages
+- **andW Work Notes Management**: Record work notes linked to posts and pages
 - **Master Data Management**: Manage requesters and workers with master lists
 - **Status Tracking**: Track status (Requested, In Progress, Completed)
 - **Date Management**: Implementation date tracking
@@ -25,24 +25,24 @@ WordPress plugin for recording and managing work notes related to client instruc
 
 ### From WordPress.org (Recommended)
 1. Navigate to WordPress Admin → Plugins → Add New
-2. Search for "Work Notes"
+2. Search for "andW Work Notes"
 3. Install and activate the plugin
 
 ### Manual Installation
-1. Upload plugin files to `/wp-content/plugins/work-notes/` directory
+1. Upload plugin files to `/wp-content/plugins/andw-work-notes/` directory
 2. Activate the plugin through the 'Plugins' screen in WordPress
-3. Configure requesters and workers in Work Notes → Settings
+3. Configure requesters and workers in andW Work Notes → Settings
 
 ---
 
 ## 💻 Usage
 
 ### Basic Setup
-1. **Configure Master Data**: Go to Work Notes → Settings to set up requesters and workers
-2. **Create Work Notes**:
-   - **Gutenberg Editor**: Use the "Work Notes" panel in the post sidebar
+1. **Configure Master Data**: Go to andW Work Notes → Settings to set up requesters and workers
+2. **Create andW Work Notes**:
+   - **Gutenberg Editor**: Use the "andW Work Notes" panel in the post sidebar
    - **Classic Editor**: Use the meta box below the post content
-   - **Standalone**: Create work notes from Work Notes → Add New
+   - **Standalone**: Create work notes from andW Work Notes → Add New
 
 ### Work Note Fields
 - **Work Title**: Brief description of the work (2-line textarea)
@@ -68,8 +68,8 @@ WordPress plugin for recording and managing work notes related to client instruc
 
 ```bash
 # Clone repository
-git clone [repository-url] work-notes
-cd work-notes
+git clone [repository-url] andw-work-notes
+cd andw-work-notes
 
 # Install dependencies
 composer install
@@ -84,7 +84,7 @@ php -l *.php           # PHP syntax check
 
 ```bash
 # Create distribution ZIP (excludes development files)
-git archive --format=zip --prefix=work-notes/ HEAD > work-notes.zip
+git archive --format=zip --prefix=andw-work-notes/ HEAD > andw-work-notes.zip
 ```
 
 The `.gitattributes` file ensures development files are excluded from distribution builds.

@@ -25,8 +25,8 @@ class ANDW_Worklog_Settings {
     public function add_settings_page() {
         add_submenu_page(
             'edit.php?post_type=andw_work_note',
-            __('作業メモ設定', 'work-notes'),
-            __('作業メモ設定', 'work-notes'),
+            __('作業メモ設定', 'andw-work-notes'),
+            __('作業メモ設定', 'andw-work-notes'),
             'manage_options',
             'ofwn-worklog-settings',
             [$this, 'render_settings_page']
@@ -52,18 +52,18 @@ class ANDW_Worklog_Settings {
             'autoload' => false
         ]);
 
-        add_settings_section('andw_section_main', __('マスター管理', 'work-notes'), '__return_false', 'andw_settings');
+        add_settings_section('andw_section_main', __('マスター管理', 'andw-work-notes'), '__return_false', 'andw_settings');
 
-        add_settings_field('andw_requesters', __('依頼元マスター（1行1件）', 'work-notes'), function(){
+        add_settings_field('andw_requesters', __('依頼元マスター（1行1件）', 'andw-work-notes'), function(){
             $v = get_option('andw_requesters', []);
             echo '<textarea name="andw_requesters[]" rows="3" style="width:600px;">'.esc_textarea(implode("\n", $v))."</textarea>";
-            echo '<p class="description">' . esc_html__('ここに入力した内容が「依頼元」のセレクトに表示されます。', 'work-notes') . '</p>';
+            echo '<p class="description">' . esc_html__('ここに入力した内容が「依頼元」のセレクトに表示されます。', 'andw-work-notes') . '</p>';
         }, 'andw_settings', 'andw_section_main');
 
-        add_settings_field('andw_workers', __('担当者マスター（1行1件）', 'work-notes'), function(){
+        add_settings_field('andw_workers', __('担当者マスター（1行1件）', 'andw-work-notes'), function(){
             $v = get_option('andw_workers', $this->default_workers());
             echo '<textarea name="andw_workers[]" rows="3" style="width:600px;">'.esc_textarea(implode("\n", $v))."</textarea>";
-            echo '<p class="description">' . esc_html__('ここに入力した内容が「担当者」のセレクトに表示されます。', 'work-notes') . '</p>';
+            echo '<p class="description">' . esc_html__('ここに入力した内容が「担当者」のセレクトに表示されます。', 'andw-work-notes') . '</p>';
         }, 'andw_settings', 'andw_section_main');
 
     }
@@ -98,31 +98,31 @@ class ANDW_Worklog_Settings {
      */
     public function render_settings_page() {
         if (!current_user_can('manage_options')) {
-            wp_die(esc_html__('この設定を変更する権限がありません。', 'work-notes'));
+            wp_die(esc_html__('この設定を変更する権限がありません。', 'andw-work-notes'));
         }
         
         ?>
         <div class="wrap">
-            <h1><?php esc_html_e('作業メモ設定', 'work-notes'); ?></h1>
+            <h1><?php esc_html_e('作業メモ設定', 'andw-work-notes'); ?></h1>
             
             <!-- マスター管理セクション -->
             <form method="post" action="options.php">
                 <?php
                 settings_fields('andw_settings');
                 do_settings_sections('andw_settings');
-                submit_button(esc_html__('マスター設定を保存', 'work-notes'));
+                submit_button(esc_html__('マスター設定を保存', 'andw-work-notes'));
                 ?>
             </form>
             
             <?php if (defined('WP_DEBUG') && WP_DEBUG && current_user_can('manage_options')) : ?>
             <hr>
 
-            <h2><?php esc_html_e('キャッシュクリア', 'work-notes'); ?></h2>
-            <p><?php esc_html_e('作業メモの保存に問題がある場合、キャッシュをクリアして改善する可能性があります。', 'work-notes'); ?></p>
+            <h2><?php esc_html_e('キャッシュクリア', 'andw-work-notes'); ?></h2>
+            <p><?php esc_html_e('作業メモの保存に問題がある場合、キャッシュをクリアして改善する可能性があります。', 'andw-work-notes'); ?></p>
 
             <div id="ofwn-cache-clear">
                 <button type="button" id="ofwn-clear-cache-btn" class="button button-secondary">
-                    <?php esc_html_e('キャッシュをクリア', 'work-notes'); ?>
+                    <?php esc_html_e('キャッシュをクリア', 'andw-work-notes'); ?>
                 </button>
                 <div id="ofwn-cache-result" style="margin-top: 10px;"></div>
             </div>
@@ -138,7 +138,7 @@ class ANDW_Worklog_Settings {
                     var $btn = $(this);
                     var $result = $('#ofwn-cache-result');
 
-                    $btn.prop('disabled', true).text('<?php esc_html_e('クリア中...', 'work-notes'); ?>');
+                    $btn.prop('disabled', true).text('<?php esc_html_e('クリア中...', 'andw-work-notes'); ?>');
                     $result.html('');
 
                     $.post(ajaxurl, {
@@ -151,9 +151,9 @@ class ANDW_Worklog_Settings {
                             $result.html('<div class="notice notice-error inline"><p>' + response.data.message + '</p></div>');
                         }
                     }).fail(function() {
-                        $result.html('<div class="notice notice-error inline"><p><?php esc_html_e('キャッシュクリアに失敗しました。', 'work-notes'); ?></p></div>');
+                        $result.html('<div class="notice notice-error inline"><p><?php esc_html_e('キャッシュクリアに失敗しました。', 'andw-work-notes'); ?></p></div>');
                     }).always(function() {
-                        $btn.prop('disabled', false).text('<?php esc_html_e('キャッシュをクリア', 'work-notes'); ?>');
+                        $btn.prop('disabled', false).text('<?php esc_html_e('キャッシュをクリア', 'andw-work-notes'); ?>');
                     });
                 });
                 <?php endif; ?>
@@ -171,12 +171,12 @@ class ANDW_Worklog_Settings {
         // ノンス検証
         $nonce = isset($_POST['nonce']) ? sanitize_text_field( wp_unslash( $_POST['nonce'] ) ) : '';
         if (!wp_verify_nonce($nonce, 'andw_clear_cache')) {
-            wp_send_json_error(['message' => __('セキュリティチェックに失敗しました。', 'work-notes')]);
+            wp_send_json_error(['message' => __('セキュリティチェックに失敗しました。', 'andw-work-notes')]);
         }
         
         // 権限チェック
         if (!current_user_can('manage_options')) {
-            wp_send_json_error(['message' => __('この操作を実行する権限がありません。', 'work-notes')]);
+            wp_send_json_error(['message' => __('この操作を実行する権限がありません。', 'andw-work-notes')]);
         }
         
         try {
@@ -213,7 +213,7 @@ class ANDW_Worklog_Settings {
                 andw_log('CACHE_CLEAR Error: ' . $e->getMessage());
             }
             /* translators: %1$s: PHP exception message */
-            wp_send_json_error(['message' => sprintf(__('キャッシュクリア中にエラーが発生しました: %1$s', 'work-notes'), esc_html($e->getMessage()))]);
+            wp_send_json_error(['message' => sprintf(__('キャッシュクリア中にエラーが発生しました: %1$s', 'andw-work-notes'), esc_html($e->getMessage()))]);
         }
     }
     

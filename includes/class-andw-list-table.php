@@ -22,13 +22,13 @@ class ANDW_List_Table extends WP_List_Table {
 
     public function get_columns() {
         return [
-            'andw_date'   => __('実施日', 'work-notes'),
-            'title'       => __('タイトル', 'work-notes'),
-            'andw_status' => __('ステータス', 'work-notes'),
-            'andw_requester' => __('依頼元', 'work-notes'),
-            'andw_worker' => __('担当者', 'work-notes'),
-            'andw_target' => __('対象', 'work-notes'),
-            'author'      => __('作成者', 'work-notes'),
+            'andw_date'   => __('実施日', 'andw-work-notes'),
+            'title'       => __('タイトル', 'andw-work-notes'),
+            'andw_status' => __('ステータス', 'andw-work-notes'),
+            'andw_requester' => __('依頼元', 'andw-work-notes'),
+            'andw_worker' => __('担当者', 'andw-work-notes'),
+            'andw_target' => __('対象', 'andw-work-notes'),
+            'author'      => __('作成者', 'andw-work-notes'),
         ];
     }
 
@@ -62,35 +62,35 @@ class ANDW_List_Table extends WP_List_Table {
         $to = ( preg_match('/^\d{4}-\d{2}-\d{2}$/', $date_to_raw) && strtotime($date_to_raw) ) ? $date_to_raw : '';
 
         echo '<div class="ofwn-filter-row">';
-        echo '<label>' . esc_html__('ステータス', 'work-notes') . ' <select name="status"><option value="">' . esc_html__('すべて', 'work-notes') . '</option>';
+        echo '<label>' . esc_html__('ステータス', 'andw-work-notes') . ' <select name="status"><option value="">' . esc_html__('すべて', 'andw-work-notes') . '</option>';
         foreach (['依頼','対応中','完了'] as $s) {
             printf('<option value="%1$s"%2$s>%1$s</option>', esc_attr($s), selected($status,$s,false));
         }
         echo '</select></label>';
 
-        echo '<label>' . esc_html__('依頼元', 'work-notes') . ' <select name="requester"><option value="">' . esc_html__('すべて', 'work-notes') . '</option>';
+        echo '<label>' . esc_html__('依頼元', 'andw-work-notes') . ' <select name="requester"><option value="">' . esc_html__('すべて', 'andw-work-notes') . '</option>';
         foreach ($this->requesters as $r) {
             printf('<option value="%1$s"%2$s>%1$s</option>', esc_attr($r), selected($requester,$r,false));
         }
         echo '</select></label>';
 
-        echo '<label>' . esc_html__('担当者', 'work-notes') . ' <select name="worker"><option value="">' . esc_html__('すべて', 'work-notes') . '</option>';
+        echo '<label>' . esc_html__('担当者', 'andw-work-notes') . ' <select name="worker"><option value="">' . esc_html__('すべて', 'andw-work-notes') . '</option>';
         foreach ($this->workers as $w) {
             printf('<option value="%1$s"%2$s>%1$s</option>', esc_attr($w), selected($worker,$w,false));
         }
         echo '</select></label>';
 
-        echo '<label>' . esc_html__('対象タイプ', 'work-notes') . ' <select name="target_type">
-                <option value="">' . esc_html__('すべて', 'work-notes') . '</option>
-                <option value="post" '.selected($tt,'post',false).'>' . esc_html__('投稿/固定ページ', 'work-notes') . '</option>
-                <option value="site" '.selected($tt,'site',false).'>' . esc_html__('サイト全体/設定/テーマ', 'work-notes') . '</option>
-                <option value="other" '.selected($tt,'other',false).'>' . esc_html__('その他', 'work-notes') . '</option>
+        echo '<label>' . esc_html__('対象タイプ', 'andw-work-notes') . ' <select name="target_type">
+                <option value="">' . esc_html__('すべて', 'andw-work-notes') . '</option>
+                <option value="post" '.selected($tt,'post',false).'>' . esc_html__('投稿/固定ページ', 'andw-work-notes') . '</option>
+                <option value="site" '.selected($tt,'site',false).'>' . esc_html__('サイト全体/設定/テーマ', 'andw-work-notes') . '</option>
+                <option value="other" '.selected($tt,'other',false).'>' . esc_html__('その他', 'andw-work-notes') . '</option>
               </select></label>';
 
-        echo '<label>' . esc_html__('実施日', 'work-notes') . ': <input type="date" name="date_from" value="'.esc_attr($from).'"> 〜 ';
+        echo '<label>' . esc_html__('実施日', 'andw-work-notes') . ': <input type="date" name="date_from" value="'.esc_attr($from).'"> 〜 ';
         echo '<input type="date" name="date_to" value="'.esc_attr($to).'"></label>';
 
-        submit_button(__('絞り込み', 'work-notes'), 'secondary', '', false);
+        submit_button(__('絞り込み', 'andw-work-notes'), 'secondary', '', false);
         echo '</div>';
     }
 
@@ -98,7 +98,7 @@ class ANDW_List_Table extends WP_List_Table {
         $base_url = remove_query_arg(['status','paged']);
         $counts = $this->status_counts();
         $views = [];
-        $statuses = ['' => __('すべて', 'work-notes'), '完了' => __('完了', 'work-notes'), '対応中' => __('対応中', 'work-notes'), '依頼' => __('依頼', 'work-notes')];
+        $statuses = ['' => __('すべて', 'andw-work-notes'), '完了' => __('完了', 'andw-work-notes'), '対応中' => __('対応中', 'andw-work-notes'), '依頼' => __('依頼', 'andw-work-notes')];
         foreach ($statuses as $key => $label) {
             $url = $key === '' ? $base_url : add_query_arg('status', $key, $base_url);
             $count = $counts[$key ?: 'all'] ?? 0;

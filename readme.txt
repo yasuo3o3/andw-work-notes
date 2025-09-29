@@ -1,4 +1,4 @@
-=== Work Notes ===
+=== andW Work Notes ===
 Contributors: netservice
 Tags: notes, workflow, task-management, admin, gutenberg
 Requires at least: 6.0
@@ -8,11 +8,11 @@ Requires PHP: 8.0
 License: GPL-2.0-or-later
 License URI: http://www.gnu.org/licenses/gpl-2.0.html
 
-A WordPress plugin for recording and managing work notes related to client instructions and site updates within your WordPress admin.
+A WordPress plugin for recording and managing andW work notes related to client instructions and site updates within your WordPress admin.
 
 == Description ==
 
-Work Notes allows you to record and manage work notes linked to posts and pages with requester/worker master management functionality.
+andW Work Notes allows you to record and manage work notes linked to posts and pages with requester/worker master management functionality.
 
 = Key Features =
 
@@ -38,9 +38,9 @@ This plugin is prepared for distribution on WordPress.org Plugin Directory with 
 
 == Installation ==
 
-1. Upload the plugin files to the `/wp-content/plugins/work-notes` directory, or install the plugin through the WordPress plugins screen directly.
+1. Upload the plugin files to the `/wp-content/plugins/andw-work-notes` directory, or install the plugin through the WordPress plugins screen directly.
 2. Activate the plugin through the 'Plugins' screen in WordPress
-3. Use the Work Notes screen to configure the plugin
+3. Use the andW Work Notes screen to configure the plugin
 4. Set up requesters and workers in Settings (recommended)
 
 == Frequently Asked Questions ==
@@ -59,9 +59,9 @@ All work note data is automatically deleted when the plugin is uninstalled.
 
 == Screenshots ==
 
-1. Work Notes list screen - Filter and search by status and requesters
+1. andW Work Notes list screen - Filter and search by status and requesters
 2. Work Note edit screen - Record detailed information including target post, requester, worker
-3. Post edit screen with Work Notes display - View and add related work notes
+3. Post edit screen with andW Work Notes display - View and add related work notes
 
 == Changelog ==
 = 1.0.5 =

@@ -42,7 +42,7 @@ require_once ANDW_DIR . 'includes/class-andw-list-table.php';
 
 // テキストドメイン読み込み（WP4.6+ではWP.org配布で自動ロード。Plugin Check対応のため削除）
 // add_action('plugins_loaded', function () {
-//     load_plugin_textdomain('work-notes', false, dirname(plugin_basename(__FILE__)) . '/languages');
+//     load_plugin_textdomain('andw-work-notes', false, dirname(plugin_basename(__FILE__)) . '/languages');
 // });
 
 // activate/deactivate フック
