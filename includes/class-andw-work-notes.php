@@ -90,6 +90,32 @@ class ANDW_Work_Notes {
     public function andw_use_classic_editor($use, $post_type) {
         return ($post_type === self::CPT) ? false : $use;
     }
+
+    /**
+     * オプションデータを配列形式に正規化
+     * 移行時にシリアライズされた文字列になっている場合があるため
+     */
+    private function normalize_option_data($option_name, $default = []) {
+        $data = get_option($option_name, $default);
+
+        // 文字列の場合（シリアライズされている可能性）
+        if (is_string($data)) {
+            // シリアライズされたデータの場合
+            if (is_serialized($data)) {
+                $unserialized = unserialize($data);
+                return is_array($unserialized) ? $unserialized : $default;
+            }
+            // 通常の文字列の場合（改行区切りとして扱う）
+            return array_filter(array_map('trim', explode("\n", $data)));
+        }
+
+        // 既に配列の場合
+        if (is_array($data)) {
+            return $data;
+        }
+
+        return $default;
+    }
     
     /**
      * 作業ログ設定機能を初期化
@@ -196,7 +222,7 @@ class ANDW_Work_Notes {
         if (isset($_GET['post_type']) && sanitize_text_field(wp_unslash($_GET['post_type'])) === self::CPT &&
             // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- GET閲覧のみでPOST処理なし
             isset($_GET['page']) && sanitize_text_field(wp_unslash($_GET['page'])) === 'ofwn-settings') {
-            wp_redirect(admin_url('edit.php?post_type=' . self::CPT . '&page=ofwn-worklog-settings'));
+            wp_safe_redirect(admin_url('edit.php?post_type=' . self::CPT . '&page=ofwn-worklog-settings'));
             exit;
         }
     }
@@ -324,8 +350,8 @@ class ANDW_Work_Notes {
         $worker       = $this->get_meta($post->ID, '_andw_worker', wp_get_current_user()->display_name);
         $date         = $this->get_meta($post->ID, '_andw_work_date', current_time('Y-m-d'));
 
-        $req_opts = get_option(self::OPT_REQUESTERS, []);
-        $wrk_opts = get_option(self::OPT_WORKERS, $this->default_workers());
+        $req_opts = $this->normalize_option_data(self::OPT_REQUESTERS, []);
+        $wrk_opts = $this->normalize_option_data(self::OPT_WORKERS, $this->default_workers());
 
         ?>
         <p><label><?php esc_html_e('対象タイプ', 'andw-work-notes'); ?><br>
@@ -710,8 +736,8 @@ class ANDW_Work_Notes {
         }
         echo '</div>';
 
-        $req_opts = get_option(self::OPT_REQUESTERS, []);
-        $wrk_opts = get_option(self::OPT_WORKERS, $this->default_workers());
+        $req_opts = $this->normalize_option_data(self::OPT_REQUESTERS, []);
+        $wrk_opts = $this->normalize_option_data(self::OPT_WORKERS, $this->default_workers());
         ?>
         <hr>
         <h4><?php esc_html_e('この投稿に作業メモを追加', 'andw-work-notes'); ?></h4>
@@ -1301,8 +1327,8 @@ class ANDW_Work_Notes {
         );
         
         // 依頼元・担当者のオプションを取得してJavaScriptに渡す
-        $requesters = get_option('andw_requesters', []);
-        $workers = get_option('andw_workers', $this->default_workers());
+        $requesters = $this->normalize_option_data('andw_requesters', []);
+        $workers = $this->normalize_option_data('andw_workers', $this->default_workers());
         
         // 現在の投稿IDを取得
         $current_post_id = 0;
@@ -1391,7 +1417,7 @@ class ANDW_Work_Notes {
                 'post_date' => 'DESC'          // 最後に作成日時
             ],
             'meta_key' => '_andw_work_date',    // phpcs:ignore WordPress.DB.SlowDBQuery.slow_db_query_meta_key -- 並び替えに必要
-            'meta_type' => 'NUMERIC'
+            'meta_type' => 'CHAR' // Y-m-d 形式の日付文字列を正しくソート
         ];
         
         $ids = andw_cached_ids_query($query_args, 60);
@@ -1448,8 +1474,8 @@ class ANDW_Work_Notes {
         }
         
         $data = [
-            'requesters' => get_option('andw_requesters', []),
-            'workers' => get_option('andw_workers', $this->default_workers())
+            'requesters' => $this->normalize_option_data('andw_requesters', []),
+            'workers' => $this->normalize_option_data('andw_workers', $this->default_workers())
         ];
         
         wp_send_json_success($data);

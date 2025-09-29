@@ -11,12 +11,38 @@ class ANDW_Worklog_Settings {
     public function __construct() {
         add_action('admin_menu', [$this, 'add_settings_page']);
         add_action('admin_init', [$this, 'register_master_settings']);
-        
+
         // AJAX ハンドラー追加
         add_action('wp_ajax_andw_clear_cache', [$this, 'ajax_clear_cache']);
-        
+
         // マイグレーション処理（通知機能削除）
         add_action('plugins_loaded', [$this, 'run_migration'], 1);
+    }
+
+    /**
+     * オプションデータを配列形式に正規化
+     * 移行時にシリアライズされた文字列になっている場合があるため
+     */
+    private function normalize_option_data($option_name, $default = []) {
+        $data = get_option($option_name, $default);
+
+        // 文字列の場合（シリアライズされている可能性）
+        if (is_string($data)) {
+            // シリアライズされたデータの場合
+            if (is_serialized($data)) {
+                $unserialized = unserialize($data);
+                return is_array($unserialized) ? $unserialized : $default;
+            }
+            // 通常の文字列の場合（改行区切りとして扱う）
+            return array_filter(array_map('trim', explode("\n", $data)));
+        }
+
+        // 既に配列の場合
+        if (is_array($data)) {
+            return $data;
+        }
+
+        return $default;
     }
     
     /**
@@ -55,13 +81,13 @@ class ANDW_Worklog_Settings {
         add_settings_section('andw_section_main', __('マスター管理', 'andw-work-notes'), '__return_false', 'andw_settings');
 
         add_settings_field('andw_requesters', __('依頼元マスター（1行1件）', 'andw-work-notes'), function(){
-            $v = get_option('andw_requesters', []);
+            $v = $this->normalize_option_data('andw_requesters', []);
             echo '<textarea name="andw_requesters[]" rows="3" style="width:600px;">'.esc_textarea(implode("\n", $v))."</textarea>";
             echo '<p class="description">' . esc_html__('ここに入力した内容が「依頼元」のセレクトに表示されます。', 'andw-work-notes') . '</p>';
         }, 'andw_settings', 'andw_section_main');
 
         add_settings_field('andw_workers', __('担当者マスター（1行1件）', 'andw-work-notes'), function(){
-            $v = get_option('andw_workers', $this->default_workers());
+            $v = $this->normalize_option_data('andw_workers', $this->default_workers());
             echo '<textarea name="andw_workers[]" rows="3" style="width:600px;">'.esc_textarea(implode("\n", $v))."</textarea>";
             echo '<p class="description">' . esc_html__('ここに入力した内容が「担当者」のセレクトに表示されます。', 'andw-work-notes') . '</p>';
         }, 'andw_settings', 'andw_section_main');
@@ -315,29 +341,47 @@ class ANDW_Worklog_Settings {
             delete_option($key);
         }
         
-        // 削除対象のユーザーメタキー
-        $user_meta_keys = [
+        // 削除対象のユーザーメタキー（ワイルドカード検索）
+        $user_meta_patterns = [
             'andw_worklog_prompted_%',
             'andw_worklog_last_prompted_%'
         ];
-        
-        foreach ($user_meta_keys as $pattern) {
-            delete_metadata('user', 0, str_replace('%', '', $pattern), '', true);
+
+        foreach ($user_meta_patterns as $pattern) {
+            $like_pattern = str_replace('%', '', $pattern) . '%';
+            $meta_keys = $wpdb->get_col($wpdb->prepare(
+                "SELECT DISTINCT meta_key FROM {$wpdb->usermeta} WHERE meta_key LIKE %s",
+                $like_pattern
+            ));
+
+            foreach ($meta_keys as $meta_key) {
+                delete_metadata('user', 0, $meta_key, '', true);
+            }
+
             // 関連キャッシュクリア
-            wp_cache_delete('ofwn:' . md5($pattern . ':usermeta'), 'ofwn');
+            wp_cache_delete('andw:' . md5($pattern . ':usermeta'), 'andw');
         }
         
-        // 削除対象のポストメタキー
-        $post_meta_keys = [
+        // 削除対象のポストメタキー（ワイルドカード検索）
+        $post_meta_patterns = [
             'andw_worklog_prompted_%',
             'andw_worklog_last_prompted_%',
             'andw_worklog_revision_%'
         ];
-        
-        foreach ($post_meta_keys as $pattern) {
-            delete_post_meta_by_key(str_replace('%', '', $pattern));
+
+        foreach ($post_meta_patterns as $pattern) {
+            $like_pattern = str_replace('%', '', $pattern) . '%';
+            $meta_keys = $wpdb->get_col($wpdb->prepare(
+                "SELECT DISTINCT meta_key FROM {$wpdb->postmeta} WHERE meta_key LIKE %s",
+                $like_pattern
+            ));
+
+            foreach ($meta_keys as $meta_key) {
+                delete_post_meta_by_key($meta_key);
+            }
+
             // 関連キャッシュクリア
-            wp_cache_delete('ofwn:' . md5($pattern . ':postmeta'), 'ofwn');
+            wp_cache_delete('andw:' . md5($pattern . ':postmeta'), 'andw');
         }
         
         // 削除対象のトランジェント

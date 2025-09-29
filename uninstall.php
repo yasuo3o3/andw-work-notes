@@ -16,28 +16,26 @@ delete_option('andw_worklog_mode');
 global $wpdb;
 
 $batch_size = 100;
-$offset = 0;
 
 // バッチ処理で全ての作業メモ投稿を削除
+// 削除処理では offset を固定（削除により先頭から詰まるため）
 do {
     $posts = get_posts([
         'post_type' => 'andw_work_note',
         'posts_per_page' => $batch_size,
-        'offset' => $offset,
+        'offset' => 0, // 常に先頭から取得
         'post_status' => 'any',
         'fields' => 'ids'
     ]);
-    
+
     if (empty($posts)) {
         break;
     }
-    
+
     // 投稿とメタデータを完全削除
     foreach ($posts as $post_id) {
         wp_delete_post($post_id, true);
     }
-    
-    $offset += $batch_size;
     
     // メモリ不足対策でガベージコレクション実行
     if (function_exists('gc_collect_cycles')) {

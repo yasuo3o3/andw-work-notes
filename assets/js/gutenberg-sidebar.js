@@ -54,7 +54,7 @@
         const workNote = useSelect(
             (select) => {
                 if (!boundCptId) return null;
-                return select('core').getEntityRecord('postType', 'of_work_note', boundCptId);
+                return select('core').getEntityRecord('postType', 'andw_work_note', boundCptId);
             },
             [boundCptId]
         );
@@ -204,7 +204,7 @@
                 
                 // wp.apiFetch でbackfill実行
                 wp.apiFetch({
-                    path: '/wp/v2/of_work_note/' + prefillData.note_id,
+                    path: '/wp/v2/andw_work_note/' + prefillData.note_id,
                     method: 'POST',
                     data: {
                         meta: {
