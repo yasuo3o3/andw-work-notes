@@ -349,10 +349,16 @@ class ANDW_Worklog_Settings {
 
         foreach ($user_meta_patterns as $pattern) {
             $like_pattern = str_replace('%', '', $pattern) . '%';
-            $meta_keys = $wpdb->get_col($wpdb->prepare(
-                "SELECT DISTINCT meta_key FROM {$wpdb->usermeta} WHERE meta_key LIKE %s",
-                $like_pattern
-            ));
+            $cache_key = 'andw:' . md5($pattern . ':usermeta_keys');
+            $meta_keys = wp_cache_get($cache_key, 'andw');
+            if (false === $meta_keys) {
+                // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery -- Safe prepared query for cleanup operations requiring wildcard meta key deletion
+                $meta_keys = $wpdb->get_col($wpdb->prepare(
+                    "SELECT DISTINCT meta_key FROM {$wpdb->usermeta} WHERE meta_key LIKE %s",
+                    $like_pattern
+                ));
+                wp_cache_set($cache_key, $meta_keys, 'andw', 300);
+            }
 
             foreach ($meta_keys as $meta_key) {
                 delete_metadata('user', 0, $meta_key, '', true);
@@ -371,10 +377,16 @@ class ANDW_Worklog_Settings {
 
         foreach ($post_meta_patterns as $pattern) {
             $like_pattern = str_replace('%', '', $pattern) . '%';
-            $meta_keys = $wpdb->get_col($wpdb->prepare(
-                "SELECT DISTINCT meta_key FROM {$wpdb->postmeta} WHERE meta_key LIKE %s",
-                $like_pattern
-            ));
+            $cache_key = 'andw:' . md5($pattern . ':postmeta_keys');
+            $meta_keys = wp_cache_get($cache_key, 'andw');
+            if (false === $meta_keys) {
+                // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery -- Safe prepared query for cleanup operations requiring wildcard meta key deletion
+                $meta_keys = $wpdb->get_col($wpdb->prepare(
+                    "SELECT DISTINCT meta_key FROM {$wpdb->postmeta} WHERE meta_key LIKE %s",
+                    $like_pattern
+                ));
+                wp_cache_set($cache_key, $meta_keys, 'andw', 300);
+            }
 
             foreach ($meta_keys as $meta_key) {
                 delete_post_meta_by_key($meta_key);
