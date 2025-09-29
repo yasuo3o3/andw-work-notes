@@ -58,7 +58,7 @@ WordPress plugin for recording and managing andW work notes related to client in
 
 - **WordPress**: 6.0 or higher
 - **PHP**: 8.0 or higher (8.1+ recommended)
-- **Tested up to**: WordPress 6.7
+- **Tested up to**: WordPress 6.8
 
 ---
 

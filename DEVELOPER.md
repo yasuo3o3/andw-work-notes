@@ -9,7 +9,7 @@ This document outlines the development workflow, quality assurance procedures, b
 ### Prerequisites
 
 * **PHP**: 8.0+ (recommended: 8.1+)
-* **WordPress**: 6.0+ (tested up to 6.7)
+* **WordPress**: 6.0+ (tested up to 6.8)
 * **Composer**: For dependency management
 * **Node.js**: 16+ (for future asset compilation)
 * **Git**: Version control
@@ -424,7 +424,7 @@ jobs:
     strategy:
       matrix:
         php-version: ['8.0', '8.1', '8.2']
-        wordpress-version: ['6.0', '6.7']
+        wordpress-version: ['6.0', '6.8']
 
     steps:
       - uses: actions/checkout@v4
