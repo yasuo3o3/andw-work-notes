@@ -61,7 +61,7 @@ class ANDW_List_Table extends WP_List_Table {
         $date_to_raw = isset($_GET['date_to']) ? sanitize_text_field( wp_unslash( $_GET['date_to'] ) ) : '';
         $to = ( preg_match('/^\d{4}-\d{2}-\d{2}$/', $date_to_raw) && strtotime($date_to_raw) ) ? $date_to_raw : '';
 
-        echo '<div class="ofwn-filter-row">';
+        echo '<div class="andw-filter-row">';
         echo '<label>' . esc_html__('ステータス', 'andw-work-notes') . ' <select name="status"><option value="">' . esc_html__('すべて', 'andw-work-notes') . '</option>';
         foreach (['依頼','対応中','完了'] as $s) {
             printf('<option value="%1$s"%2$s>%1$s</option>', esc_attr($s), selected($status,$s,false));
@@ -120,7 +120,7 @@ class ANDW_List_Table extends WP_List_Table {
         
         // Plugin Check対策: 軽キャッシュ追加
         $ckey = 'andw_list_all_count_v1';
-        $all_count = wp_cache_get($ckey, 'ofwn');
+        $all_count = wp_cache_get($ckey, 'andw');
         if (false === $all_count) {
             // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery -- Safe prepared query for list table pagination
             $all_count = (int) $wpdb->get_var($wpdb->prepare(
@@ -128,13 +128,13 @@ class ANDW_List_Table extends WP_List_Table {
                 ANDW_Work_Notes::CPT,
                 'publish'
             ));
-            wp_cache_set($ckey, $all_count, 'ofwn', 60);
+            wp_cache_set($ckey, $all_count, 'andw', 60);
         }
         $out['all'] = $all_count;
         
         // ステータス別件数（LEFT JOINでメタデータと結合）
         $ckey2 = 'andw_list_status_counts_v1';
-        $status_counts = wp_cache_get($ckey2, 'ofwn');
+        $status_counts = wp_cache_get($ckey2, 'andw');
         if (false === $status_counts) {
             // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery -- Safe prepared query for status counts with caching
             $status_counts = (array) $wpdb->get_results($wpdb->prepare(
@@ -145,7 +145,7 @@ class ANDW_List_Table extends WP_List_Table {
                  GROUP BY COALESCE(pm.meta_value, %s)",
                 $default_status, '_andw_status', ANDW_Work_Notes::CPT, 'publish', $default_status
             ));
-            wp_cache_set($ckey2, $status_counts, 'ofwn', 60);
+            wp_cache_set($ckey2, $status_counts, 'andw', 60);
         }
         
         // 結果を許可リストでフィルターして設定
@@ -279,7 +279,7 @@ class ANDW_List_Table extends WP_List_Table {
                 return '<strong><a href="'.esc_url($item['edit_link']).'">'.esc_html($item['title']).'</a></strong>';
             case 'andw_status':
                 $cls = '完了' === $item['status'] ? 'done' : '';
-                return '<span class="ofwn-badge ' . esc_attr($cls) . '">' . esc_html($item['status']) . '</span>';
+                return '<span class="andw-badge ' . esc_attr($cls) . '">' . esc_html($item['status']) . '</span>';
             case 'andw_requester':
                 return esc_html($item['requester'] ?: '—');
             case 'andw_worker':

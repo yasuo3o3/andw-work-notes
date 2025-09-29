@@ -54,7 +54,7 @@ class ANDW_Worklog_Settings {
             __('作業メモ設定', 'andw-work-notes'),
             __('作業メモ設定', 'andw-work-notes'),
             'manage_options',
-            'ofwn-worklog-settings',
+            'andw-worklog-settings',
             [$this, 'render_settings_page']
         );
     }
@@ -146,11 +146,11 @@ class ANDW_Worklog_Settings {
             <h2><?php esc_html_e('キャッシュクリア', 'andw-work-notes'); ?></h2>
             <p><?php esc_html_e('作業メモの保存に問題がある場合、キャッシュをクリアして改善する可能性があります。', 'andw-work-notes'); ?></p>
 
-            <div id="ofwn-cache-clear">
-                <button type="button" id="ofwn-clear-cache-btn" class="button button-secondary">
+            <div id="andw-cache-clear">
+                <button type="button" id="andw-clear-cache-btn" class="button button-secondary">
                     <?php esc_html_e('キャッシュをクリア', 'andw-work-notes'); ?>
                 </button>
-                <div id="ofwn-cache-result" style="margin-top: 10px;"></div>
+                <div id="andw-cache-result" style="margin-top: 10px;"></div>
             </div>
             <?php endif; ?>
             
@@ -160,9 +160,9 @@ class ANDW_Worklog_Settings {
                 
                 <?php if (defined('WP_DEBUG') && WP_DEBUG && current_user_can('manage_options')) : ?>
                 // キャッシュクリア機能
-                $('#ofwn-clear-cache-btn').on('click', function() {
+                $('#andw-clear-cache-btn').on('click', function() {
                     var $btn = $(this);
-                    var $result = $('#ofwn-cache-result');
+                    var $result = $('#andw-cache-result');
 
                     $btn.prop('disabled', true).text('<?php esc_html_e('クリア中...', 'andw-work-notes'); ?>');
                     $result.html('');
@@ -251,8 +251,8 @@ class ANDW_Worklog_Settings {
         
         // work-notes関連の投稿IDを取得
         $args = ['post', 'page', 'andw_work_note'];
-        $cache_key = 'ofwn:' . md5(serialize($args) . ':post_ids');
-        if (false !== ($cached = wp_cache_get($cache_key, 'ofwn'))) {
+        $cache_key = 'andw:' . md5(serialize($args) . ':post_ids');
+        if (false !== ($cached = wp_cache_get($cache_key, 'andw'))) {
             $post_ids = $cached;
         } else {
             $placeholders = implode(',', array_fill(0, count($args), '%s'));
@@ -264,7 +264,7 @@ class ANDW_Worklog_Settings {
                 // 'suppress_filters' => true, // VIP: 禁止のため無効化
             ]);
             $post_ids = $q->posts;
-            wp_cache_set($cache_key, $post_ids, 'ofwn', 300);
+            wp_cache_set($cache_key, $post_ids, 'andw', 300);
         }
         
         // 各投稿のキャッシュをクリア
@@ -282,8 +282,8 @@ class ANDW_Worklog_Settings {
         
         // work-notes関連のトランジェントキーを検索して削除
         $args = ['_transient_andw_%', '_transient_timeout_andw_%', '_transient_work_notes_%'];
-        $cache_key = 'ofwn:' . md5(serialize($args) . ':transient_keys');
-        if (false !== ($cached = wp_cache_get($cache_key, 'ofwn'))) {
+        $cache_key = 'andw:' . md5(serialize($args) . ':transient_keys');
+        if (false !== ($cached = wp_cache_get($cache_key, 'andw'))) {
             $transient_keys = $cached;
         } else {
             $all_options = function_exists('wp_load_alloptions') ? wp_load_alloptions() : [];
@@ -295,7 +295,7 @@ class ANDW_Worklog_Settings {
                     $transient_keys[] = $option_name;
                 }
             }
-            wp_cache_set($cache_key, $transient_keys, 'ofwn', 300);
+            wp_cache_set($cache_key, $transient_keys, 'andw', 300);
         }
         
         foreach ($transient_keys as $key) {
@@ -399,7 +399,7 @@ class ANDW_Worklog_Settings {
             }
             
             // 関連キャッシュクリア
-            wp_cache_delete('ofwn:' . md5($pattern . ':transients'), 'ofwn');
+            wp_cache_delete('andw:' . md5($pattern . ':transients'), 'andw');
         }
     }
 }

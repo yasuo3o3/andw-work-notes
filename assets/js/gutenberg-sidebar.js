@@ -99,7 +99,7 @@
             setTimeout(() => {
                 const ajaxData = {
                     action: 'andw_create_work_note',
-                    nonce: window.ofwnAjax?.nonce || '',
+                    nonce: window.andwAjax?.nonce || '',
                     post_id: postId,
                     work_title: workTitle || '',
                     work_content: workContent || '',
@@ -160,11 +160,11 @@
         
         // 初期値適用処理（初回マウント時のみ）
         useEffect(() => {
-            if (prefillApplied || !window.ofwnPrefill || !meta) {
+            if (prefillApplied || !window.andwPrefill || !meta) {
                 return;
             }
             
-            const prefillData = window.ofwnPrefill;
+            const prefillData = window.andwPrefill;
             let hasUpdates = false;
             const updates = { ...meta };
             
@@ -247,8 +247,8 @@
         // }, [isSaving, meta?._andw_work_title, meta?._andw_work_content]);
         
         // 依頼元・担当者のオプション（サーバーから取得）
-        const requesterOptions = window.ofwnGutenbergData?.requesters || [];
-        const workerOptions = window.ofwnGutenbergData?.workers || [];
+        const requesterOptions = window.andwGutenbergData?.requesters || [];
+        const workerOptions = window.andwGutenbergData?.workers || [];
         
         // セレクトオプションを構築
         const requesterSelectOptions = [
@@ -310,7 +310,7 @@
                     // 依頼元
                     e(SelectControl, {
                         label: __('依頼元', 'andw-work-notes'),
-                        className: 'andw-work-notes-field ofwn-inline',
+                        className: 'andw-work-notes-field andw-inline',
                         value: requesterSelectOptions.find(opt => opt.value === currentRequester) ? currentRequester : '__custom__',
                         options: requesterSelectOptions,
                         onChange: function(value) {
@@ -336,7 +336,7 @@
                     // 担当者
                     e(SelectControl, {
                         label: __('担当者', 'andw-work-notes'),
-                        className: 'andw-work-notes-field ofwn-inline',
+                        className: 'andw-work-notes-field andw-inline',
                         value: workerSelectOptions.find(opt => opt.value === currentWorker) ? currentWorker : '__custom__',
                         options: workerSelectOptions,
                         onChange: function(value) {
@@ -362,7 +362,7 @@
                     // ステータス
                     e(SelectControl, {
                         label: __('ステータス', 'andw-work-notes'),
-                        className: 'andw-work-notes-field ofwn-inline',
+                        className: 'andw-work-notes-field andw-inline',
                         value: currentStatus,
                         options: [
                             { label: __('依頼', 'andw-work-notes'), value: '依頼' },
@@ -377,7 +377,7 @@
                     // 実施日
                     e(TextControl, {
                         label: __('実施日', 'andw-work-notes'),
-                        className: 'andw-work-notes-field ofwn-inline',
+                        className: 'andw-work-notes-field andw-inline',
                         type: 'date',
                         value: currentWorkDate,
                         onChange: function(value) {

@@ -198,13 +198,13 @@ class ANDW_Work_Notes {
         }
         
         wp_enqueue_style(
-            'ofwn-admin', 
+            'andw-admin',
             ANDW_URL . 'assets/admin.css', 
             [], 
             filemtime(ANDW_DIR . 'assets/admin.css')
         );
         wp_enqueue_script(
-            'ofwn-admin', 
+            'andw-admin',
             ANDW_URL . 'assets/admin.js', 
             [], 
             filemtime(ANDW_DIR . 'assets/admin.js'), 
@@ -221,8 +221,8 @@ class ANDW_Work_Notes {
         // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- GET閲覧のみでPOST処理なし
         if (isset($_GET['post_type']) && sanitize_text_field(wp_unslash($_GET['post_type'])) === self::CPT &&
             // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- GET閲覧のみでPOST処理なし
-            isset($_GET['page']) && sanitize_text_field(wp_unslash($_GET['page'])) === 'ofwn-settings') {
-            wp_safe_redirect(admin_url('edit.php?post_type=' . self::CPT . '&page=ofwn-worklog-settings'));
+            isset($_GET['page']) && sanitize_text_field(wp_unslash($_GET['page'])) === 'andw-settings') {
+            wp_safe_redirect(admin_url('edit.php?post_type=' . self::CPT . '&page=andw-worklog-settings'));
             exit;
         }
     }
@@ -322,8 +322,8 @@ class ANDW_Work_Notes {
     private function render_select_with_custom($name, $options, $current_value, $placeholder='その他（手入力）') {
         $options = is_array($options) ? $options : [];
         $is_custom = $current_value && !in_array($current_value, $options, true);
-        echo '<div class="ofwn-inline">';
-        echo '<select name="'.esc_attr($name).'_select" data-ofwn-select="1">';
+        echo '<div class="andw-inline">';
+        echo '<select name="'.esc_attr($name).'_select" data-andw-select="1">';
         echo '<option value="">（選択）</option>';
         foreach ($options as $opt) {
             printf('<option value="%1$s"%2$s>%1$s</option>',
@@ -333,7 +333,7 @@ class ANDW_Work_Notes {
         }
         echo '<option value="__custom__"'.selected($is_custom, true, false).'>'.esc_html($placeholder).'</option>';
         echo '</select>';
-        echo ' <input type="text" data-ofwn-custom="'.esc_attr($name).'_select" name="'.esc_attr($name).'" value="'.esc_attr($current_value).'" placeholder="'.esc_attr($placeholder).'" '.($is_custom?'':'style="display:none"').'>';
+        echo ' <input type="text" data-andw-custom="'.esc_attr($name).'_select" name="'.esc_attr($name).'" value="'.esc_attr($current_value).'" placeholder="'.esc_attr($placeholder).'" '.($is_custom?'':'style="display:none"').'>';
         echo '</div>';
     }
 
@@ -370,15 +370,15 @@ class ANDW_Work_Notes {
 
         <!-- 作業タイトル・作業内容のUIは撤去（標準のタイトル欄・本文エディタを使用） -->
 
-        <p class="ofwn-inline"><label><?php esc_html_e('依頼元', 'andw-work-notes'); ?></label><br>
+        <p class="andw-inline"><label><?php esc_html_e('依頼元', 'andw-work-notes'); ?></label><br>
             <?php $this->render_select_with_custom('andw_requester', $req_opts, $requester, __('依頼元を手入力', 'andw-work-notes')); ?>
         </p>
 
-        <p class="ofwn-inline"><label><?php esc_html_e('担当者', 'andw-work-notes'); ?></label><br>
+        <p class="andw-inline"><label><?php esc_html_e('担当者', 'andw-work-notes'); ?></label><br>
             <?php $this->render_select_with_custom('andw_worker', $wrk_opts, $worker, __('担当者を手入力', 'andw-work-notes')); ?>
         </p>
 
-        <p class="ofwn-inline"><label><?php esc_html_e('ステータス', 'andw-work-notes'); ?><br>
+        <p class="andw-inline"><label><?php esc_html_e('ステータス', 'andw-work-notes'); ?><br>
             <select name="andw_status">
                 <option value="依頼" <?php selected($status,'依頼');?>><?php esc_html_e('依頼', 'andw-work-notes'); ?></option>
                 <option value="対応中" <?php selected($status,'対応中');?>><?php esc_html_e('対応中', 'andw-work-notes'); ?></option>
@@ -386,7 +386,7 @@ class ANDW_Work_Notes {
             </select>
         </label></p>
 
-        <p class="ofwn-inline"><label><?php esc_html_e('実施日', 'andw-work-notes'); ?><br>
+        <p class="andw-inline"><label><?php esc_html_e('実施日', 'andw-work-notes'); ?><br>
             <input type="date" name="andw_work_date" value="<?php echo esc_attr($date);?>">
         </label></p>
         <?php
@@ -560,7 +560,7 @@ class ANDW_Work_Notes {
         if ($col === 'andw_status') {
             $s = $this->get_meta($post_id, '_andw_status','依頼');
             $cls = '完了' === $s ? 'done' : '';
-            echo '<span class="ofwn-badge ' . esc_attr($cls) . '">' . esc_html($s) . '</span>';
+            echo '<span class="andw-badge ' . esc_attr($cls) . '">' . esc_html($s) . '</span>';
         }
     }
 
@@ -716,16 +716,16 @@ class ANDW_Work_Notes {
         $ids = andw_cached_ids_query($args, 60);
         $notes = get_posts(['post__in' => $ids, 'orderby' => 'post__in', 'post_type' => self::CPT]);
 
-        echo '<div class="ofwn-list">';
+        echo '<div class="andw-list">';
         if ($notes) {
             foreach ($notes as $n) {
                 $status = get_post_meta($n->ID, '_andw_status', true);
                 $req = get_post_meta($n->ID, '_andw_requester', true);
                 $worker = get_post_meta($n->ID, '_andw_worker', true);
                 $date = get_post_meta($n->ID, '_andw_work_date', true);
-                echo '<div class="ofwn-note-item">';
+                echo '<div class="andw-note-item">';
                 echo '<strong>'.esc_html(get_the_title($n)).'</strong> ';
-                echo '<span class="ofwn-badge ' . esc_attr($status==='完了'?'done':'') . '">' . esc_html($status ?: '—') . '</span><br>';
+                echo '<span class="andw-badge ' . esc_attr($status==='完了'?'done':'') . '">' . esc_html($status ?: '—') . '</span><br>';
                 echo wp_kses_post(wpautop($n->post_content));
                 echo '<small>依頼元: '.esc_html($req ?: '—').' / 担当: '.esc_html($worker ?: '—').' / 実施日: '.esc_html($date ?: '—').'</small>';
                 echo ' / <a href="'.esc_url(get_edit_post_link($n->ID)).'">' . esc_html__('編集', 'andw-work-notes') . '</a>';
@@ -748,7 +748,7 @@ class ANDW_Work_Notes {
 
         <p><label><?php esc_html_e('内容（作業メモ本文）', 'andw-work-notes'); ?><br><textarea name="andw_quick_content" rows="4" style="width:100%;"></textarea></label></p>
 
-        <p class="ofwn-inline">
+        <p class="andw-inline">
             <label><?php esc_html_e('ステータス', 'andw-work-notes'); ?>
                 <select name="andw_quick_status">
                     <option value="依頼"><?php esc_html_e('依頼', 'andw-work-notes'); ?></option>
@@ -1253,7 +1253,7 @@ class ANDW_Work_Notes {
             __('作業一覧', 'andw-work-notes'),
             __('作業一覧', 'andw-work-notes'),
             'edit_posts',
-            'ofwn-list',
+            'andw-list',
             [$this, 'render_list_page']
         );
     }
@@ -1274,8 +1274,8 @@ class ANDW_Work_Notes {
         echo '<div class="wrap"><h1 class="wp-heading-inline">' . esc_html__('作業一覧', 'andw-work-notes') . '</h1>';
         echo '<form method="get">';
         echo '<input type="hidden" name="post_type" value="'.esc_attr(self::CPT).'">';
-        echo '<input type="hidden" name="page" value="ofwn-list">';
-        $table->search_box(__('キーワード検索', 'andw-work-notes'), 'ofwn-search');
+        echo '<input type="hidden" name="page" value="andw-list">';
+        $table->search_box(__('キーワード検索', 'andw-work-notes'), 'andw-search');
         $table->views();
         $table->display();
         echo '</form></div>';
@@ -1303,7 +1303,7 @@ class ANDW_Work_Notes {
         }
         
         wp_enqueue_script(
-            'ofwn-gutenberg-sidebar',
+            'andw-gutenberg-sidebar',
             ANDW_URL . 'assets/js/gutenberg-sidebar.js',
             [
                 'wp-plugins',     // registerPlugin
@@ -1320,7 +1320,7 @@ class ANDW_Work_Notes {
         
         // Gutenbergサイドバー専用CSS
         wp_enqueue_style(
-            'ofwn-gutenberg-sidebar-css',
+            'andw-gutenberg-sidebar-css',
             ANDW_URL . 'assets/css/gutenberg-sidebar.css',
             [],
             filemtime(ANDW_DIR . 'assets/css/gutenberg-sidebar.css')
@@ -1359,7 +1359,7 @@ class ANDW_Work_Notes {
             }
         }
         
-        wp_localize_script('ofwn-gutenberg-sidebar', 'ofwnGutenbergData', [
+        wp_localize_script('andw-gutenberg-sidebar', 'andwGutenbergData', [
             'requesters' => $requesters,
             'workers' => $workers,
             'ajax_url' => admin_url('admin-ajax.php'),
@@ -1367,13 +1367,13 @@ class ANDW_Work_Notes {
         ]);
         
         // AJAX作業メモ作成用のnonce（別の変数として設定）
-        wp_localize_script('ofwn-gutenberg-sidebar', 'ofwnAjax', [
+        wp_localize_script('andw-gutenberg-sidebar', 'andwAjax', [
             'nonce' => wp_create_nonce('andw_create_work_note'),
             'ajax_url' => admin_url('admin-ajax.php')
         ]);
         
         // 初期値データを別の変数として渡す
-        wp_localize_script('ofwn-gutenberg-sidebar', 'ofwnPrefill', $prefill_data ?: []);
+        wp_localize_script('andw-gutenberg-sidebar', 'andwPrefill', $prefill_data ?: []);
     }
     
     /**
