@@ -1,5 +1,5 @@
 === andW Work Notes ===
-Contributors: netservice
+Contributors: yasuo3o3
 Tags: notes, workflow, task-management, admin, gutenberg
 Requires at least: 6.0
 Tested up to: 6.8

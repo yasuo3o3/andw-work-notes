@@ -1,2207 +1,2463 @@
 <?php
-if (!defined('ABSPATH')) exit;
+if ( ! defined( 'ABSPATH' ) ) {
+	exit;
+}
 
 /**
  * 超軽量のWP_Queryキャッシュ（IDs配列で返却）
  * Plugin Check緩和＆体感高速化用。TTLは短く（60秒）。
  */
 function andw_cached_ids_query( array $args, $ttl = 60 ) {
-    $args = array_replace(
-        [
-            'fields'                   => 'ids',
-            'no_found_rows'            => true,
-            'update_post_meta_cache'   => false,
-            'update_post_term_cache'   => false,
-        ],
-        $args
-    );
-    $ckey = 'q_' . md5( wp_json_encode( $args ) );
-    $cached = wp_cache_get( $ckey, 'andw' );
-    if ( false !== $cached ) {
-        return $cached;
-    }
-    $ids = get_posts( $args ); // fields=ids なので配列IDが返る
-    wp_cache_set( $ckey, $ids, 'andw', (int) $ttl );
-    return $ids;
+	$args   = array_replace(
+		array(
+			'fields'                 => 'ids',
+			'no_found_rows'          => true,
+			'update_post_meta_cache' => false,
+			'update_post_term_cache' => false,
+		),
+		$args
+	);
+	$ckey   = 'q_' . md5( wp_json_encode( $args ) );
+	$cached = wp_cache_get( $ckey, 'andw' );
+	if ( false !== $cached ) {
+		return $cached;
+	}
+	$ids = get_posts( $args ); // fields=ids なので配列IDが返る
+	wp_cache_set( $ckey, $ids, 'andw', (int) $ttl );
+	return $ids;
 }
 
 class ANDW_Work_Notes {
-    const CPT = 'andw_work_note';
-    const NONCE = 'andw_nonce';
-    const OPT_REQUESTERS = 'andw_requesters';
-    const OPT_WORKERS    = 'andw_workers';
+	const CPT            = 'andw_work_note';
+	const NONCE          = 'andw_nonce';
+	const OPT_REQUESTERS = 'andw_requesters';
+	const OPT_WORKERS    = 'andw_workers';
 
-    public function __construct() {
-        add_action('init', [$this, 'register_cpt']);
-        add_action('init', [$this, 'register_meta_fields']);
-        
-        // 作業ログ機能を初期化
-        $this->init_worklog_features();
-        add_action('add_meta_boxes', [$this, 'add_meta_boxes']);
-        add_action('save_post', [$this, 'save_note_meta']);
-        add_action('save_post', [$this, 'migrate_legacy_meta_to_post_fields'], 10, 2);
-        add_action('save_post', [$this, 'capture_quick_note_from_parent'], 20, 2);
-        
-        // Gutenberg対応: 一時的に単一フック方式に変更（重複問題解決のため）
-        // wp_after_insert_postのみを使用し、save_postは無効化
-        // add_action('save_post_post', [$this, 'auto_create_work_note_from_meta'], 50, 2);
-        // add_action('save_post_page', [$this, 'auto_create_work_note_from_meta'], 50, 2);
-        add_action('wp_after_insert_post', [$this, 'final_create_work_note_from_meta'], 30, 4);
-        
-        // デバッグ用フック（デバッグ環境でのみ登録）
-        if (defined('WP_DEBUG') && WP_DEBUG) {
-            add_action('save_post_post', [$this, 'debug_save_timing_early'], 5, 2);
-            add_action('save_post_post', [$this, 'debug_save_timing_late'], 100, 2);
-            add_action('save_post_page', [$this, 'debug_save_timing_early'], 5, 2);
-            add_action('save_post_page', [$this, 'debug_save_timing_late'], 100, 2);
-            add_action('wp_after_insert_post', [$this, 'debug_after_insert_post'], 10, 4);
-        }
-        
-        // AJAX エンドポイント追加（JavaScript主導の作業メモ作成用）
-        add_action('wp_ajax_andw_create_work_note', [$this, 'ajax_create_work_note']);
-        
-        // Phase 1: CPT削除時の親投稿メタデータクリーンアップ
-        add_action('before_delete_post', [$this, 'cleanup_parent_meta_on_cpt_delete']);
-        
-        add_filter('manage_edit-' . self::CPT . '_columns', [$this, 'cols']);
-        add_action('manage_' . self::CPT . '_posts_custom_column', [$this, 'col_content'], 10, 2);
-        add_filter('manage_edit-' . self::CPT . '_sortable_columns', [$this, 'sortable_cols']);
-        add_action('pre_get_posts', [$this, 'handle_sortable_columns']);
-        add_action('admin_bar_menu', [$this, 'admin_bar_quick_add'], 80);
-        add_action('admin_enqueue_scripts', [$this, 'enqueue_admin_assets']);
-        add_action('current_screen', [$this, 'maybe_prefill_target_meta']);
-        add_action('wp_ajax_andw_get_sidebar_data', [$this, 'ajax_get_sidebar_data']);
+	public function __construct() {
+		add_action( 'init', array( $this, 'register_cpt' ) );
+		add_action( 'init', array( $this, 'register_meta_fields' ) );
 
-        // 旧設定ページのリダイレクト処理
-        add_action('admin_init', [$this, 'handle_legacy_settings_redirect']);
+		// 作業ログ機能を初期化
+		$this->init_worklog_features();
+		add_action( 'add_meta_boxes', array( $this, 'add_meta_boxes' ) );
+		add_action( 'save_post', array( $this, 'save_note_meta' ) );
+		add_action( 'save_post', array( $this, 'migrate_legacy_meta_to_post_fields' ), 10, 2 );
+		add_action( 'save_post', array( $this, 'capture_quick_note_from_parent' ), 20, 2 );
 
-        // 作業一覧ページ（一時的に非表示 - 「作業メモ」メニューと重複のため）
-        // add_action('admin_menu', [$this, 'add_list_page']);
-        
-        
-        
-        // CPT「作業メモ」のみクラシックエディター使用
-        add_filter('use_block_editor_for_post_type', [$this, 'andw_use_classic_editor'], 10, 2);
-    }
-    
-    /**
-     * CPT「作業メモ」のみクラシックエディターを使用
-     */
-    public function andw_use_classic_editor($use, $post_type) {
-        return ($post_type === self::CPT) ? false : $use;
-    }
+		// Gutenberg対応: 一時的に単一フック方式に変更（重複問題解決のため）
+		// wp_after_insert_postのみを使用し、save_postは無効化
+		// add_action('save_post_post', [$this, 'auto_create_work_note_from_meta'], 50, 2);
+		// add_action('save_post_page', [$this, 'auto_create_work_note_from_meta'], 50, 2);
+		add_action( 'wp_after_insert_post', array( $this, 'final_create_work_note_from_meta' ), 30, 4 );
 
-    /**
-     * オプションデータを配列形式に正規化
-     * 移行時にシリアライズされた文字列になっている場合があるため
-     */
-    private function normalize_option_data($option_name, $default = []) {
-        $data = get_option($option_name, $default);
+		// デバッグ用フック（デバッグ環境でのみ登録）
+		if ( defined( 'WP_DEBUG' ) && WP_DEBUG ) {
+			add_action( 'save_post_post', array( $this, 'debug_save_timing_early' ), 5, 2 );
+			add_action( 'save_post_post', array( $this, 'debug_save_timing_late' ), 100, 2 );
+			add_action( 'save_post_page', array( $this, 'debug_save_timing_early' ), 5, 2 );
+			add_action( 'save_post_page', array( $this, 'debug_save_timing_late' ), 100, 2 );
+			add_action( 'wp_after_insert_post', array( $this, 'debug_after_insert_post' ), 10, 4 );
+		}
 
-        // 文字列の場合（シリアライズされている可能性）
-        if (is_string($data)) {
-            // シリアライズされたデータの場合
-            if (is_serialized($data)) {
-                $unserialized = unserialize($data);
-                return is_array($unserialized) ? $unserialized : $default;
-            }
-            // 通常の文字列の場合（改行区切りとして扱う）
-            return array_filter(array_map('trim', explode("\n", $data)));
-        }
+		// AJAX エンドポイント追加（JavaScript主導の作業メモ作成用）
+		add_action( 'wp_ajax_andw_create_work_note', array( $this, 'ajax_create_work_note' ) );
 
-        // 既に配列の場合
-        if (is_array($data)) {
-            return $data;
-        }
+		// Phase 1: CPT削除時の親投稿メタデータクリーンアップ
+		add_action( 'before_delete_post', array( $this, 'cleanup_parent_meta_on_cpt_delete' ) );
 
-        return $default;
-    }
-    
-    /**
-     * 作業ログ設定機能を初期化
-     */
-    private function init_worklog_features() {
-        // 設定クラスを初期化
-        if (!class_exists('ANDW_Worklog_Settings')) {
-            require_once ANDW_DIR . 'includes/class-andw-worklog-settings.php';
-        }
-        new ANDW_Worklog_Settings();
-        
-        // Gutenberg サイドバー用アセット読み込み
-        if (is_admin()) {
-            add_action('enqueue_block_editor_assets', [$this, 'enqueue_gutenberg_sidebar_assets']);
-            // 一覧画面のカスタマイズは既存のcolsとcol_contentメソッドで実装済み
-        }
-    }
+		add_filter( 'manage_edit-' . self::CPT . '_columns', array( $this, 'cols' ) );
+		add_action( 'manage_' . self::CPT . '_posts_custom_column', array( $this, 'col_content' ), 10, 2 );
+		add_filter( 'manage_edit-' . self::CPT . '_sortable_columns', array( $this, 'sortable_cols' ) );
+		add_action( 'pre_get_posts', array( $this, 'handle_sortable_columns' ) );
+		add_action( 'admin_bar_menu', array( $this, 'admin_bar_quick_add' ), 80 );
+		add_action( 'admin_enqueue_scripts', array( $this, 'enqueue_admin_assets' ) );
+		add_action( 'current_screen', array( $this, 'maybe_prefill_target_meta' ) );
+		add_action( 'wp_ajax_andw_get_sidebar_data', array( $this, 'ajax_get_sidebar_data' ) );
 
-    /* ===== 基本 ===== */
+		// 旧設定ページのリダイレクト処理
+		add_action( 'admin_init', array( $this, 'handle_legacy_settings_redirect' ) );
 
-    public function register_cpt() {
-        register_post_type(self::CPT, [
-            'labels' => [
-                'name' => __('作業メモ', 'andw-work-notes'),
-                'singular_name' => __('作業メモ', 'andw-work-notes'),
-                'add_new' => __('新規メモ', 'andw-work-notes'),
-                'add_new_item' => __('作業メモを追加', 'andw-work-notes'),
-                'edit_item' => __('作業メモを編集', 'andw-work-notes'),
-                'new_item' => __('新規作業メモ', 'andw-work-notes'),
-                'view_item' => __('作業メモを表示', 'andw-work-notes'),
-                'search_items' => __('作業メモを検索', 'andw-work-notes'),
-                'menu_name' => __('作業メモ', 'andw-work-notes'),
-            ],
-            'public' => false,
-            'show_ui' => true,
-            'show_in_menu' => true,
-            'menu_icon' => 'dashicons-clipboard',
-            'supports' => ['title','editor','author'],
-            'capability_type' => 'post',
-            'map_meta_cap' => true,
-            'show_in_rest' => true,
-        ]);
-    }
+		// 作業一覧ページ（一時的に非表示 - 「作業メモ」メニューと重複のため）
+		// add_action('admin_menu', [$this, 'add_list_page']);
 
-    public function enqueue_admin_assets($hook) {
-        // 作業メモ関連画面のみで読み込み
-        $screen = get_current_screen();
-        
-        // メイン条件: 作業メモのpost_typeまたは関連ページ
-        $is_work_notes_screen = false;
-        
-        if ($screen && self::CPT === $screen->post_type) {
-            $is_work_notes_screen = true;
-        }
-        
-        // 作業メモの管理ページ
-        if (in_array($hook, [
-            'andw_work_note_page_andw-settings',
-            'andw_work_note_page_andw-list'
-        ])) {
-            $is_work_notes_screen = true;
-        }
-        
-        // edit.php?post_type=andw_work_note
+		// CPT「作業メモ」のみクラシックエディター使用
+		add_filter( 'use_block_editor_for_post_type', array( $this, 'andw_use_classic_editor' ), 10, 2 );
+	}
+
+	/**
+	 * CPT「作業メモ」のみクラシックエディターを使用
+	 */
+	public function andw_use_classic_editor( $use, $post_type ) {
+		return ( $post_type === self::CPT ) ? false : $use;
+	}
+
+	/**
+	 * オプションデータを配列形式に正規化
+	 * 移行時にシリアライズされた文字列になっている場合があるため
+	 */
+	private function normalize_option_data( $option_name, $default = array() ) {
+		$data = get_option( $option_name, $default );
+
+		// 文字列の場合（シリアライズされている可能性）
+		if ( is_string( $data ) ) {
+			// シリアライズされたデータの場合
+			if ( is_serialized( $data ) ) {
+				$unserialized = unserialize( $data );
+				return is_array( $unserialized ) ? $unserialized : $default;
+			}
+			// 通常の文字列の場合（改行区切りとして扱う）
+			return array_filter( array_map( 'trim', explode( "\n", $data ) ) );
+		}
+
+		// 既に配列の場合
+		if ( is_array( $data ) ) {
+			return $data;
+		}
+
+		return $default;
+	}
+
+	/**
+	 * 作業ログ設定機能を初期化
+	 */
+	private function init_worklog_features() {
+		// 設定クラスを初期化
+		if ( ! class_exists( 'ANDW_Worklog_Settings' ) ) {
+			require_once ANDW_DIR . 'includes/class-andw-worklog-settings.php';
+		}
+		new ANDW_Worklog_Settings();
+
+		// Gutenberg サイドバー用アセット読み込み
+		if ( is_admin() ) {
+			add_action( 'enqueue_block_editor_assets', array( $this, 'enqueue_gutenberg_sidebar_assets' ) );
+			// 一覧画面のカスタマイズは既存のcolsとcol_contentメソッドで実装済み
+		}
+	}
+
+	/* ===== 基本 ===== */
+
+	public function register_cpt() {
+		register_post_type(
+			self::CPT,
+			array(
+				'labels'          => array(
+					'name'          => __( '作業メモ', 'andw-work-notes' ),
+					'singular_name' => __( '作業メモ', 'andw-work-notes' ),
+					'add_new'       => __( '新規メモ', 'andw-work-notes' ),
+					'add_new_item'  => __( '作業メモを追加', 'andw-work-notes' ),
+					'edit_item'     => __( '作業メモを編集', 'andw-work-notes' ),
+					'new_item'      => __( '新規作業メモ', 'andw-work-notes' ),
+					'view_item'     => __( '作業メモを表示', 'andw-work-notes' ),
+					'search_items'  => __( '作業メモを検索', 'andw-work-notes' ),
+					'menu_name'     => __( '作業メモ', 'andw-work-notes' ),
+				),
+				'public'          => false,
+				'show_ui'         => true,
+				'show_in_menu'    => true,
+				'menu_icon'       => 'dashicons-clipboard',
+				'supports'        => array( 'title', 'editor', 'author' ),
+				'capability_type' => 'post',
+				'map_meta_cap'    => true,
+				'show_in_rest'    => true,
+			)
+		);
+	}
+
+	public function enqueue_admin_assets( $hook ) {
+		// 作業メモ関連画面のみで読み込み
+		$screen = get_current_screen();
+
+		// メイン条件: 作業メモのpost_typeまたは関連ページ
+		$is_work_notes_screen = false;
+
+		if ( $screen && self::CPT === $screen->post_type ) {
+			$is_work_notes_screen = true;
+		}
+
+		// 作業メモの管理ページ
+		if ( in_array(
+			$hook,
+			array(
+				'andw_work_note_page_andw-settings',
+				'andw_work_note_page_andw-list',
+			)
+		) ) {
+			$is_work_notes_screen = true;
+		}
+
+		// edit.php?post_type=andw_work_note
         // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- GET閲覧のみでPOST処理なし
-        if ($hook === 'edit.php' && isset($_GET['post_type']) && sanitize_text_field(wp_unslash($_GET['post_type'])) === self::CPT) {
-            $is_work_notes_screen = true;
-        }
-        
-        // 個別投稿/固定ページ編集画面（作業メモボックス表示のため）
-        if (in_array($hook, ['post.php', 'post-new.php']) && $screen) {
-            $public_post_types = get_post_types(['public' => true], 'names');
-            if (in_array($screen->post_type, $public_post_types)) {
-                $is_work_notes_screen = true;
-            }
-        }
-        
-        if (!$is_work_notes_screen) {
-            return;
-        }
-        
-        wp_enqueue_style(
-            'andw-admin',
-            ANDW_URL . 'assets/admin.css', 
-            [], 
-            filemtime(ANDW_DIR . 'assets/admin.css')
-        );
-        wp_enqueue_script(
-            'andw-admin',
-            ANDW_URL . 'assets/admin.js', 
-            [], 
-            filemtime(ANDW_DIR . 'assets/admin.js'), 
-            true
-        );
-    }
+		if ( $hook === 'edit.php' && isset( $_GET['post_type'] ) && sanitize_text_field( wp_unslash( $_GET['post_type'] ) ) === self::CPT ) {
+			$is_work_notes_screen = true;
+		}
 
-    /* ===== 設定（マスター管理） ===== */
+		// 個別投稿/固定ページ編集画面（作業メモボックス表示のため）
+		if ( in_array( $hook, array( 'post.php', 'post-new.php' ) ) && $screen ) {
+			$public_post_types = get_post_types( array( 'public' => true ), 'names' );
+			if ( in_array( $screen->post_type, $public_post_types ) ) {
+				$is_work_notes_screen = true;
+			}
+		}
 
-    /**
-     * 旧設定ページへのアクセスを作業ログ設定にリダイレクト
-     */
-    public function handle_legacy_settings_redirect() {
+		if ( ! $is_work_notes_screen ) {
+			return;
+		}
+
+		wp_enqueue_style(
+			'andw-admin',
+			ANDW_URL . 'assets/admin.css',
+			array(),
+			filemtime( ANDW_DIR . 'assets/admin.css' )
+		);
+		wp_enqueue_script(
+			'andw-admin',
+			ANDW_URL . 'assets/admin.js',
+			array(),
+			filemtime( ANDW_DIR . 'assets/admin.js' ),
+			true
+		);
+	}
+
+	/* ===== 設定（マスター管理） ===== */
+
+	/**
+	 * 旧設定ページへのアクセスを作業ログ設定にリダイレクト
+	 */
+	public function handle_legacy_settings_redirect() {
         // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- GET閲覧のみでPOST処理なし
-        if (isset($_GET['post_type']) && sanitize_text_field(wp_unslash($_GET['post_type'])) === self::CPT &&
+		if ( isset( $_GET['post_type'] ) && sanitize_text_field( wp_unslash( $_GET['post_type'] ) ) === self::CPT &&
             // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- GET閲覧のみでPOST処理なし
-            isset($_GET['page']) && sanitize_text_field(wp_unslash($_GET['page'])) === 'andw-settings') {
-            wp_safe_redirect(admin_url('edit.php?post_type=' . self::CPT . '&page=andw-worklog-settings'));
-            exit;
-        }
-    }
+			isset( $_GET['page'] ) && sanitize_text_field( wp_unslash( $_GET['page'] ) ) === 'andw-settings' ) {
+			wp_safe_redirect( admin_url( 'edit.php?post_type=' . self::CPT . '&page=andw-worklog-settings' ) );
+			exit;
+		}
+	}
 
-    public function register_settings() {
-        register_setting('andw_settings', self::OPT_REQUESTERS, [
-            'type' => 'array',
-            'sanitize_callback' => [$this, 'sanitize_list'],
-            'default' => [],
-            'show_in_rest' => false,
-            'autoload' => false
-        ]);
-        register_setting('andw_settings', self::OPT_WORKERS, [
-            'type' => 'array',
-            'sanitize_callback' => [$this, 'sanitize_list'],
-            'default' => $this->default_workers(),
-            'show_in_rest' => false,
-            'autoload' => false
-        ]);
+	public function register_settings() {
+		register_setting(
+			'andw_settings',
+			self::OPT_REQUESTERS,
+			array(
+				'type'              => 'array',
+				'sanitize_callback' => array( $this, 'sanitize_list' ),
+				'default'           => array(),
+				'show_in_rest'      => false,
+				'autoload'          => false,
+			)
+		);
+		register_setting(
+			'andw_settings',
+			self::OPT_WORKERS,
+			array(
+				'type'              => 'array',
+				'sanitize_callback' => array( $this, 'sanitize_list' ),
+				'default'           => $this->default_workers(),
+				'show_in_rest'      => false,
+				'autoload'          => false,
+			)
+		);
 
-        add_settings_section('andw_section_main', __('マスター管理', 'andw-work-notes'), '__return_false', 'andw_settings');
+		add_settings_section( 'andw_section_main', __( 'マスター管理', 'andw-work-notes' ), '__return_false', 'andw_settings' );
 
-        add_settings_field(self::OPT_REQUESTERS, __('依頼元マスター（1行1件）', 'andw-work-notes'), function(){
-            $v = get_option(self::OPT_REQUESTERS, []);
-            echo '<textarea name="'.esc_attr(self::OPT_REQUESTERS).'[]" rows="3" style="width:600px;">'.esc_textarea(implode("\n", $v))."</textarea>";
-            echo '<p class="description">' . esc_html__('ここに入力した内容が「依頼元」のセレクトに表示されます。', 'andw-work-notes') . '</p>';
-        }, 'andw_settings', 'andw_section_main');
+		add_settings_field(
+			self::OPT_REQUESTERS,
+			__( '依頼元マスター（1行1件）', 'andw-work-notes' ),
+			function () {
+				$v = get_option( self::OPT_REQUESTERS, array() );
+				echo '<textarea name="' . esc_attr( self::OPT_REQUESTERS ) . '[]" rows="3" style="width:600px;">' . esc_textarea( implode( "\n", $v ) ) . '</textarea>';
+				echo '<p class="description">' . esc_html__( 'ここに入力した内容が「依頼元」のセレクトに表示されます。', 'andw-work-notes' ) . '</p>';
+			},
+			'andw_settings',
+			'andw_section_main'
+		);
 
-        add_settings_field(self::OPT_WORKERS, __('担当者マスター（1行1件）', 'andw-work-notes'), function(){
-            $v = get_option(self::OPT_WORKERS, $this->default_workers());
-            echo '<textarea name="'.esc_attr(self::OPT_WORKERS).'[]" rows="3" style="width:600px;">'.esc_textarea(implode("\n", $v))."</textarea>";
-            echo '<p class="description">' . esc_html__('ここに入力した内容が「担当者」のセレクトに表示されます。', 'andw-work-notes') . '</p>';
-        }, 'andw_settings', 'andw_section_main');
+		add_settings_field(
+			self::OPT_WORKERS,
+			__( '担当者マスター（1行1件）', 'andw-work-notes' ),
+			function () {
+				$v = get_option( self::OPT_WORKERS, $this->default_workers() );
+				echo '<textarea name="' . esc_attr( self::OPT_WORKERS ) . '[]" rows="3" style="width:600px;">' . esc_textarea( implode( "\n", $v ) ) . '</textarea>';
+				echo '<p class="description">' . esc_html__( 'ここに入力した内容が「担当者」のセレクトに表示されます。', 'andw-work-notes' ) . '</p>';
+			},
+			'andw_settings',
+			'andw_section_main'
+		);
+	}
 
-    }
-
-    public function sanitize_list($raw) {
-        if (is_array($raw) && count($raw) === 1 && is_string($raw[0])) $raw = $raw[0];
-        $text = is_array($raw) ? implode("\n", $raw) : (string)$raw;
-        $lines = array_filter(array_map(function($s){
-            $s = trim(str_replace(["\r\n","\r"], "\n", $s)); return $s;
-        }, explode("\n", $text)));
-        $lines = array_values(array_unique($lines));
-        return $lines;
-    }
-    
-
-    private function default_workers() {
-        $roles = ['administrator','editor','author'];
-        $users = get_users(['role__in'=>$roles, 'fields'=>['display_name']]);
-        $names = array_map(function($u){ return $u->display_name; }, $users);
-        $names = array_filter(array_unique($names));
-        if (empty($names)) $names = [wp_get_current_user()->display_name ?: '担当者A'];
-        return array_values($names);
-    }
-
-    public function render_settings_page() {
-        if (!current_user_can('manage_options')) return;
-        ?>
-        <div class="wrap">
-            <h1><?php esc_html_e('作業メモ設定', 'andw-work-notes'); ?></h1>
-            
-            <form method="post" action="options.php">
-                <?php
-                settings_fields('andw_settings');
-                do_settings_sections('andw_settings');
-                submit_button(__('保存', 'andw-work-notes'));
-                ?>
-            </form>
-            
-        </div>
-        <?php
-    }
-
-    /* ===== メタボックス ===== */
-
-    public function add_meta_boxes() {
-        // 作業メモCPTはそのまま維持（既存機能の互換性）
-        if (!function_exists('use_block_editor_for_post_type') || !use_block_editor_for_post_type(self::CPT)) {
-            add_meta_box('andw_fields', __('作業メモ属性', 'andw-work-notes'), [$this, 'box_note_fields'], self::CPT, 'side', 'default');
-        }
-        
-        // 投稿と固定ページにClassic Editor時のみメタボックス追加
-        $target_post_types = ['post', 'page'];
-        foreach ($target_post_types as $post_type) {
-            if (!function_exists('use_block_editor_for_post_type') || !use_block_editor_for_post_type($post_type)) {
-                add_meta_box('andw_parent', __('作業メモ', 'andw-work-notes'), [$this, 'box_parent_notes'], $post_type, 'normal', 'default');
-            }
-        }
-    }
-
-    private function get_meta($post_id, $key, $default = '') {
-        $v = get_post_meta($post_id, $key, true);
-        return $v !== '' ? $v : $default;
-    }
-
-    private function render_select_with_custom($name, $options, $current_value, $placeholder='その他（手入力）') {
-        $options = is_array($options) ? $options : [];
-        $is_custom = $current_value && !in_array($current_value, $options, true);
-        echo '<div class="andw-inline">';
-        echo '<select name="'.esc_attr($name).'_select" data-andw-select="1">';
-        echo '<option value="">（選択）</option>';
-        foreach ($options as $opt) {
-            printf('<option value="%1$s"%2$s>%1$s</option>',
-                esc_attr($opt),
-                selected($current_value, $opt, false)
-            );
-        }
-        echo '<option value="__custom__"'.selected($is_custom, true, false).'>'.esc_html($placeholder).'</option>';
-        echo '</select>';
-        echo ' <input type="text" data-andw-custom="'.esc_attr($name).'_select" name="'.esc_attr($name).'" value="'.esc_attr($current_value).'" placeholder="'.esc_attr($placeholder).'" '.($is_custom?'':'style="display:none"').'>';
-        echo '</div>';
-    }
-
-    public function box_note_fields($post) {
-        if (!current_user_can('edit_post', $post->ID)) return;
-        wp_nonce_field(self::NONCE, self::NONCE);
-
-        $target_type  = $this->get_meta($post->ID, '_andw_target_type', '');
-        $target_id    = $this->get_meta($post->ID, '_andw_target_id', '');
-        // 統合された作業タイトル（対象ラベルからの移行を含む）
-        $work_title = get_post_meta($post->ID, '_andw_work_title', true) ?: $this->get_meta($post->ID, '_andw_target_label', '');
-        $status       = $this->get_meta($post->ID, '_andw_status', '依頼');
-        $requester    = $this->get_meta($post->ID, '_andw_requester', '');
-        $worker       = $this->get_meta($post->ID, '_andw_worker', wp_get_current_user()->display_name);
-        $date         = $this->get_meta($post->ID, '_andw_work_date', current_time('Y-m-d'));
-
-        $req_opts = $this->normalize_option_data(self::OPT_REQUESTERS, []);
-        $wrk_opts = $this->normalize_option_data(self::OPT_WORKERS, $this->default_workers());
-
-        ?>
-        <p><label><?php esc_html_e('対象タイプ', 'andw-work-notes'); ?><br>
-            <select name="andw_target_type">
-                <option value=""><?php esc_html_e('（任意）', 'andw-work-notes'); ?></option>
-                <option value="post" <?php selected($target_type,'post');?>><?php esc_html_e('投稿/固定ページ', 'andw-work-notes'); ?></option>
-                <option value="site" <?php selected($target_type,'site');?>><?php esc_html_e('サイト全体/設定/テーマ', 'andw-work-notes'); ?></option>
-                <option value="other" <?php selected($target_type,'other');?>><?php esc_html_e('その他', 'andw-work-notes'); ?></option>
-            </select>
-        </label></p>
-
-        <p><label><?php esc_html_e('対象ID（投稿IDなど）', 'andw-work-notes'); ?><br>
-            <input type="text" name="andw_target_id" value="<?php echo esc_attr($target_id);?>" style="width:100%;">
-        </label></p>
+	public function sanitize_list( $raw ) {
+		if ( is_array( $raw ) && count( $raw ) === 1 && is_string( $raw[0] ) ) {
+			$raw = $raw[0];
+		}
+		$text  = is_array( $raw ) ? implode( "\n", $raw ) : (string) $raw;
+		$lines = array_filter(
+			array_map(
+				function ( $s ) {
+					$s = trim( str_replace( array( "\r\n", "\r" ), "\n", $s ) );
+					return $s;
+				},
+				explode( "\n", $text )
+			)
+		);
+		$lines = array_values( array_unique( $lines ) );
+		return $lines;
+	}
 
 
-        <!-- 作業タイトル・作業内容のUIは撤去（標準のタイトル欄・本文エディタを使用） -->
+	private function default_workers() {
+		$roles = array( 'administrator', 'editor', 'author' );
+		$users = get_users(
+			array(
+				'role__in' => $roles,
+				'fields'   => array( 'display_name' ),
+			)
+		);
+		$names = array_map(
+			function ( $u ) {
+				return $u->display_name;
+			},
+			$users
+		);
+		$names = array_filter( array_unique( $names ) );
+		if ( empty( $names ) ) {
+			$names = array( wp_get_current_user()->display_name ?: '担当者A' );
+		}
+		return array_values( $names );
+	}
 
-        <p class="andw-inline"><label><?php esc_html_e('依頼元', 'andw-work-notes'); ?></label><br>
-            <?php $this->render_select_with_custom('andw_requester', $req_opts, $requester, __('依頼元を手入力', 'andw-work-notes')); ?>
-        </p>
+	public function render_settings_page() {
+		if ( ! current_user_can( 'manage_options' ) ) {
+			return;
+		}
+		?>
+		<div class="wrap">
+			<h1><?php esc_html_e( '作業メモ設定', 'andw-work-notes' ); ?></h1>
+			
+			<form method="post" action="options.php">
+				<?php
+				settings_fields( 'andw_settings' );
+				do_settings_sections( 'andw_settings' );
+				submit_button( __( '保存', 'andw-work-notes' ) );
+				?>
+			</form>
+			
+		</div>
+		<?php
+	}
 
-        <p class="andw-inline"><label><?php esc_html_e('担当者', 'andw-work-notes'); ?></label><br>
-            <?php $this->render_select_with_custom('andw_worker', $wrk_opts, $worker, __('担当者を手入力', 'andw-work-notes')); ?>
-        </p>
+	/* ===== メタボックス ===== */
 
-        <p class="andw-inline"><label><?php esc_html_e('ステータス', 'andw-work-notes'); ?><br>
-            <select name="andw_status">
-                <option value="依頼" <?php selected($status,'依頼');?>><?php esc_html_e('依頼', 'andw-work-notes'); ?></option>
-                <option value="対応中" <?php selected($status,'対応中');?>><?php esc_html_e('対応中', 'andw-work-notes'); ?></option>
-                <option value="完了" <?php selected($status,'完了');?>><?php esc_html_e('完了', 'andw-work-notes'); ?></option>
-            </select>
-        </label></p>
+	public function add_meta_boxes() {
+		// 作業メモCPTはそのまま維持（既存機能の互換性）
+		if ( ! function_exists( 'use_block_editor_for_post_type' ) || ! use_block_editor_for_post_type( self::CPT ) ) {
+			add_meta_box( 'andw_fields', __( '作業メモ属性', 'andw-work-notes' ), array( $this, 'box_note_fields' ), self::CPT, 'side', 'default' );
+		}
 
-        <p class="andw-inline"><label><?php esc_html_e('実施日', 'andw-work-notes'); ?><br>
-            <input type="date" name="andw_work_date" value="<?php echo esc_attr($date);?>">
-        </label></p>
-        <?php
-    }
+		// 投稿と固定ページにClassic Editor時のみメタボックス追加
+		$target_post_types = array( 'post', 'page' );
+		foreach ( $target_post_types as $post_type ) {
+			if ( ! function_exists( 'use_block_editor_for_post_type' ) || ! use_block_editor_for_post_type( $post_type ) ) {
+				add_meta_box( 'andw_parent', __( '作業メモ', 'andw-work-notes' ), array( $this, 'box_parent_notes' ), $post_type, 'normal', 'default' );
+			}
+		}
+	}
 
-    public function save_note_meta($post_id) {
-        // デバッグログ開始（本番では無効化）
-        $debug_log = defined('WP_DEBUG') && WP_DEBUG && defined('WP_DEBUG_LOG') && WP_DEBUG_LOG;
-        if ($debug_log) {
-            andw_log('save_note_meta called for post_id: ' . $post_id);
-        }
-        
-        // ノンス検証（最優先）
-        if (!isset($_POST[self::NONCE])) {
-            if ($debug_log) andw_log('Nonce field missing');
-            return;
-        }
+	private function get_meta( $post_id, $key, $default = '' ) {
+		$v = get_post_meta( $post_id, $key, true );
+		return $v !== '' ? $v : $default;
+	}
 
-        check_admin_referer(self::NONCE, self::NONCE);
-        
-        // 自動保存スキップ
-        if (defined('DOING_AUTOSAVE') && DOING_AUTOSAVE) {
-            if ($debug_log) andw_log('Skipping autosave');
-            return;
-        }
-        
-        // 権限チェック
-        if (!current_user_can('edit_post', $post_id)) {
-            if ($debug_log) andw_log('User cannot edit post');
-            return;
-        }
-        
-        // 投稿タイプチェック
-        if (self::CPT !== get_post_type($post_id)) {
-            if ($debug_log) andw_log('Wrong post type: ' . get_post_type($post_id));
-            return;
-        }
-        
-        // Quick Edit 対策：メタフィールドが存在しない場合はスキップ
-        if (!isset($_POST['andw_requester_select']) && !isset($_POST['andw_requester'])) {
-            if ($debug_log) andw_log(' Meta fields not present, possibly Quick Edit - skipping');
-            return;
-        }
+	private function render_select_with_custom( $name, $options, $current_value, $placeholder = 'その他（手入力）' ) {
+		$options   = is_array( $options ) ? $options : array();
+		$is_custom = $current_value && ! in_array( $current_value, $options, true );
+		echo '<div class="andw-inline">';
+		echo '<select name="' . esc_attr( $name ) . '_select" data-andw-select="1">';
+		echo '<option value="">（選択）</option>';
+		foreach ( $options as $opt ) {
+			printf(
+				'<option value="%1$s"%2$s>%1$s</option>',
+				esc_attr( $opt ),
+				selected( $current_value, $opt, false )
+			);
+		}
+		echo '<option value="__custom__"' . selected( $is_custom, true, false ) . '>' . esc_html( $placeholder ) . '</option>';
+		echo '</select>';
+		echo ' <input type="text" data-andw-custom="' . esc_attr( $name ) . '_select" name="' . esc_attr( $name ) . '" value="' . esc_attr( $current_value ) . '" placeholder="' . esc_attr( $placeholder ) . '" ' . ( $is_custom ? '' : 'style="display:none"' ) . '>';
+		echo '</div>';
+	}
 
-        $requester = $this->resolve_select_or_custom('andw_requester');
-        $worker    = $this->resolve_select_or_custom('andw_worker');
+	public function box_note_fields( $post ) {
+		if ( ! current_user_can( 'edit_post', $post->ID ) ) {
+			return;
+		}
+		wp_nonce_field( self::NONCE, self::NONCE );
 
-        $map = [
-            '_andw_target_type'  => 'andw_target_type',
-            '_andw_target_id'    => 'andw_target_id',
-            // '_andw_target_label' => 'andw_target_label', // 廃止：作業タイトルに統合
-            '_andw_requester'    => $requester,
-            '_andw_worker'       => $worker,
-            '_andw_status'       => 'andw_status',
-            '_andw_work_date'    => 'andw_work_date',
-            // 作業タイトル・作業内容は標準のpost_title/post_contentを使用（メタ保存は不要）
-        ];
-        
-        // 作業タイトル・作業内容は標準フィールド使用のため自動コピー処理は不要
-        // 保存前のログ
-        if ($debug_log) {
-            andw_log('Saving meta: requester=' . $requester . ', worker=' . $worker);
-        }
-        
-        foreach ($map as $meta => $fieldOrValue) {
-            $old_value = get_post_meta($post_id, $meta, true);
-            
-            if (is_string($fieldOrValue) && isset($_POST[$fieldOrValue])) {
-                $new_value = sanitize_text_field(wp_unslash($_POST[$fieldOrValue]));
-                update_post_meta($post_id, $meta, $new_value);
-                if ($debug_log && $old_value !== $new_value) {
-                    andw_log('Updated ' . $meta . ': "' . $old_value . '" -> "' . $new_value . '"');
-                }
-            } elseif (!is_string($fieldOrValue) && $fieldOrValue !== null) {
-                $new_value = sanitize_text_field($fieldOrValue);
-                update_post_meta($post_id, $meta, $new_value);
-                if ($debug_log && $old_value !== $new_value) {
-                    andw_log('Updated ' . $meta . ': "' . $old_value . '" -> "' . $new_value . '"');
-                }
-            }
-        }
-        
-        // 保存後の検証
-        if ($debug_log) {
-            $saved_req = get_post_meta($post_id, '_andw_requester', true);
-            $saved_worker = get_post_meta($post_id, '_andw_worker', true);
-            andw_log(' Post-save verification: requester=' . $saved_req . ', worker=' . $saved_worker);
-            andw_log(' Using standard post_title/post_content for work title and content');
-        }
+		$target_type = $this->get_meta( $post->ID, '_andw_target_type', '' );
+		$target_id   = $this->get_meta( $post->ID, '_andw_target_id', '' );
+		// 統合された作業タイトル（対象ラベルからの移行を含む）
+		$work_title = get_post_meta( $post->ID, '_andw_work_title', true ) ?: $this->get_meta( $post->ID, '_andw_target_label', '' );
+		$status     = $this->get_meta( $post->ID, '_andw_status', '依頼' );
+		$requester  = $this->get_meta( $post->ID, '_andw_requester', '' );
+		$worker     = $this->get_meta( $post->ID, '_andw_worker', wp_get_current_user()->display_name );
+		$date       = $this->get_meta( $post->ID, '_andw_work_date', current_time( 'Y-m-d' ) );
 
-        if (empty($_POST['post_title'])) {
-            $t = get_post_field('post_title', $post_id);
-            if (!$t) {
-                wp_update_post([
-                    'ID' => $post_id,
-                    'post_title' => '作業メモ ' . current_time('Y-m-d H:i')
-                ]);
-            }
-        }
-    }
+		$req_opts = $this->normalize_option_data( self::OPT_REQUESTERS, array() );
+		$wrk_opts = $this->normalize_option_data( self::OPT_WORKERS, $this->default_workers() );
 
-    private function resolve_select_or_custom($baseName) {
-        // nonce検証は呼び出し元で実施済み
+		?>
+		<p><label><?php esc_html_e( '対象タイプ', 'andw-work-notes' ); ?><br>
+			<select name="andw_target_type">
+				<option value=""><?php esc_html_e( '（任意）', 'andw-work-notes' ); ?></option>
+				<option value="post" <?php selected( $target_type, 'post' ); ?>><?php esc_html_e( '投稿/固定ページ', 'andw-work-notes' ); ?></option>
+				<option value="site" <?php selected( $target_type, 'site' ); ?>><?php esc_html_e( 'サイト全体/設定/テーマ', 'andw-work-notes' ); ?></option>
+				<option value="other" <?php selected( $target_type, 'other' ); ?>><?php esc_html_e( 'その他', 'andw-work-notes' ); ?></option>
+			</select>
+		</label></p>
+
+		<p><label><?php esc_html_e( '対象ID（投稿IDなど）', 'andw-work-notes' ); ?><br>
+			<input type="text" name="andw_target_id" value="<?php echo esc_attr( $target_id ); ?>" style="width:100%;">
+		</label></p>
+
+
+		<!-- 作業タイトル・作業内容のUIは撤去（標準のタイトル欄・本文エディタを使用） -->
+
+		<p class="andw-inline"><label><?php esc_html_e( '依頼元', 'andw-work-notes' ); ?></label><br>
+			<?php $this->render_select_with_custom( 'andw_requester', $req_opts, $requester, __( '依頼元を手入力', 'andw-work-notes' ) ); ?>
+		</p>
+
+		<p class="andw-inline"><label><?php esc_html_e( '担当者', 'andw-work-notes' ); ?></label><br>
+			<?php $this->render_select_with_custom( 'andw_worker', $wrk_opts, $worker, __( '担当者を手入力', 'andw-work-notes' ) ); ?>
+		</p>
+
+		<p class="andw-inline"><label><?php esc_html_e( 'ステータス', 'andw-work-notes' ); ?><br>
+			<select name="andw_status">
+				<option value="依頼" <?php selected( $status, '依頼' ); ?>><?php esc_html_e( '依頼', 'andw-work-notes' ); ?></option>
+				<option value="対応中" <?php selected( $status, '対応中' ); ?>><?php esc_html_e( '対応中', 'andw-work-notes' ); ?></option>
+				<option value="完了" <?php selected( $status, '完了' ); ?>><?php esc_html_e( '完了', 'andw-work-notes' ); ?></option>
+			</select>
+		</label></p>
+
+		<p class="andw-inline"><label><?php esc_html_e( '実施日', 'andw-work-notes' ); ?><br>
+			<input type="date" name="andw_work_date" value="<?php echo esc_attr( $date ); ?>">
+		</label></p>
+		<?php
+	}
+
+	public function save_note_meta( $post_id ) {
+		// デバッグログ開始（本番では無効化）
+		$debug_log = defined( 'WP_DEBUG' ) && WP_DEBUG && defined( 'WP_DEBUG_LOG' ) && WP_DEBUG_LOG;
+		if ( $debug_log ) {
+			andw_log( 'save_note_meta called for post_id: ' . $post_id );
+		}
+
+		// ノンス検証（最優先）
+		if ( ! isset( $_POST[ self::NONCE ] ) ) {
+			if ( $debug_log ) {
+				andw_log( 'Nonce field missing' );
+			}
+			return;
+		}
+
+		check_admin_referer( self::NONCE, self::NONCE );
+
+		// 自動保存スキップ
+		if ( defined( 'DOING_AUTOSAVE' ) && DOING_AUTOSAVE ) {
+			if ( $debug_log ) {
+				andw_log( 'Skipping autosave' );
+			}
+			return;
+		}
+
+		// 権限チェック
+		if ( ! current_user_can( 'edit_post', $post_id ) ) {
+			if ( $debug_log ) {
+				andw_log( 'User cannot edit post' );
+			}
+			return;
+		}
+
+		// 投稿タイプチェック
+		if ( self::CPT !== get_post_type( $post_id ) ) {
+			if ( $debug_log ) {
+				andw_log( 'Wrong post type: ' . get_post_type( $post_id ) );
+			}
+			return;
+		}
+
+		// Quick Edit 対策：メタフィールドが存在しない場合はスキップ
+		if ( ! isset( $_POST['andw_requester_select'] ) && ! isset( $_POST['andw_requester'] ) ) {
+			if ( $debug_log ) {
+				andw_log( ' Meta fields not present, possibly Quick Edit - skipping' );
+			}
+			return;
+		}
+
+		$requester = $this->resolve_select_or_custom( 'andw_requester' );
+		$worker    = $this->resolve_select_or_custom( 'andw_worker' );
+
+		$map = array(
+			'_andw_target_type' => 'andw_target_type',
+			'_andw_target_id'   => 'andw_target_id',
+			// '_andw_target_label' => 'andw_target_label', // 廃止：作業タイトルに統合
+			'_andw_requester'   => $requester,
+			'_andw_worker'      => $worker,
+			'_andw_status'      => 'andw_status',
+			'_andw_work_date'   => 'andw_work_date',
+			// 作業タイトル・作業内容は標準のpost_title/post_contentを使用（メタ保存は不要）
+		);
+
+		// 作業タイトル・作業内容は標準フィールド使用のため自動コピー処理は不要
+		// 保存前のログ
+		if ( $debug_log ) {
+			andw_log( 'Saving meta: requester=' . $requester . ', worker=' . $worker );
+		}
+
+		foreach ( $map as $meta => $fieldOrValue ) {
+			$old_value = get_post_meta( $post_id, $meta, true );
+
+			if ( is_string( $fieldOrValue ) && isset( $_POST[ $fieldOrValue ] ) ) {
+				$new_value = sanitize_text_field( wp_unslash( $_POST[ $fieldOrValue ] ) );
+				update_post_meta( $post_id, $meta, $new_value );
+				if ( $debug_log && $old_value !== $new_value ) {
+					andw_log( 'Updated ' . $meta . ': "' . $old_value . '" -> "' . $new_value . '"' );
+				}
+			} elseif ( ! is_string( $fieldOrValue ) && $fieldOrValue !== null ) {
+				$new_value = sanitize_text_field( $fieldOrValue );
+				update_post_meta( $post_id, $meta, $new_value );
+				if ( $debug_log && $old_value !== $new_value ) {
+					andw_log( 'Updated ' . $meta . ': "' . $old_value . '" -> "' . $new_value . '"' );
+				}
+			}
+		}
+
+		// 保存後の検証
+		if ( $debug_log ) {
+			$saved_req    = get_post_meta( $post_id, '_andw_requester', true );
+			$saved_worker = get_post_meta( $post_id, '_andw_worker', true );
+			andw_log( ' Post-save verification: requester=' . $saved_req . ', worker=' . $saved_worker );
+			andw_log( ' Using standard post_title/post_content for work title and content' );
+		}
+
+		if ( empty( $_POST['post_title'] ) ) {
+			$t = get_post_field( 'post_title', $post_id );
+			if ( ! $t ) {
+				wp_update_post(
+					array(
+						'ID'         => $post_id,
+						'post_title' => '作業メモ ' . current_time( 'Y-m-d H:i' ),
+					)
+				);
+			}
+		}
+	}
+
+	private function resolve_select_or_custom( $baseName ) {
+		// nonce検証は呼び出し元で実施済み
         // phpcs:ignore WordPress.Security.NonceVerification.Missing -- 呼び出し元で検証済み
-        $sel = sanitize_text_field(wp_unslash($_POST[$baseName . '_select'] ?? ''));
+		$sel = sanitize_text_field( wp_unslash( $_POST[ $baseName . '_select' ] ?? '' ) );
         // phpcs:ignore WordPress.Security.NonceVerification.Missing -- 呼び出し元で検証済み
-        $custom = sanitize_text_field(wp_unslash($_POST[$baseName] ?? ''));
-        if ($sel === '__custom__') return $custom;
-        return $sel ?: $custom;
-    }
+		$custom = sanitize_text_field( wp_unslash( $_POST[ $baseName ] ?? '' ) );
+		if ( $sel === '__custom__' ) {
+			return $custom;
+		}
+		return $sel ?: $custom;
+	}
 
-    public function cols($cols) {
-        $new = [];
-        $new['cb'] = $cols['cb'] ?? '';
-        $new['title'] = __('タイトル', 'andw-work-notes');
-        // 新規追加: 作業タイトルと作業内容列をタイトル列の直後に追加
-        $new['work_title'] = __('作業タイトル', 'andw-work-notes');
-        $new['work_content'] = __('作業内容', 'andw-work-notes');
-        $new['andw_requester'] = '依頼元';
-        $new['andw_assignee'] = '担当者';
-        $new['andw_target'] = '対象';
-        $new['andw_status'] = 'ステータス';
-        $new['author'] = '作成者';
-        $new['date'] = '日付';
-        return $new;
-    }
+	public function cols( $cols ) {
+		$new          = array();
+		$new['cb']    = $cols['cb'] ?? '';
+		$new['title'] = __( 'タイトル', 'andw-work-notes' );
+		// 新規追加: 作業タイトルと作業内容列をタイトル列の直後に追加
+		$new['work_title']     = __( '作業タイトル', 'andw-work-notes' );
+		$new['work_content']   = __( '作業内容', 'andw-work-notes' );
+		$new['andw_requester'] = '依頼元';
+		$new['andw_assignee']  = '担当者';
+		$new['andw_target']    = '対象';
+		$new['andw_status']    = 'ステータス';
+		$new['author']         = '作成者';
+		$new['date']           = '日付';
+		return $new;
+	}
 
-    public function col_content($col, $post_id) {
-        // 作業タイトル列の表示処理（post_titleを使用、旧メタからフォールバック）
-        if ($col === 'work_title') {
-            $post_title = get_post_field('post_title', $post_id);
-            $fallback_title = get_post_meta($post_id, '_andw_work_title', true) ?: get_post_meta($post_id, '_andw_target_label', true);
-            $display_title = $post_title ?: $fallback_title ?: __('データなし', 'andw-work-notes');
-            echo esc_html($display_title);
-        }
-        // 作業内容列の表示処理（post_contentを使用、旧メタからフォールバック）
-        if ($col === 'work_content') {
-            $post_content = get_post_field('post_content', $post_id);
-            $fallback_content = get_post_meta($post_id, '_andw_work_content', true);
-            $raw_content = $post_content ?: $fallback_content;
-            
-            if (!empty($raw_content)) {
-                // HTMLタグを除去し、40-60文字で要約
-                $plain_content = wp_strip_all_tags($raw_content);
-                $truncated_content = mb_strlen($plain_content) > 60 ? mb_substr($plain_content, 0, 57) . '...' : $plain_content;
-                echo esc_html($truncated_content);
-            } else {
-                echo '—';
-            }
-        }
-        if ($col === 'andw_requester') {
-            $requester = $this->get_meta($post_id, '_andw_requester');
-            echo esc_html($requester ?: '—');
-        }
-        if ($col === 'andw_assignee') {
-            $worker = $this->get_meta($post_id, '_andw_worker');
-            echo esc_html($worker ?: '—');
-        }
-        if ($col === 'andw_target') {
-            $type  = $this->get_meta($post_id, '_andw_target_type');
-            $id    = $this->get_meta($post_id, '_andw_target_id');
-            $label = $this->get_meta($post_id, '_andw_target_label');
-            if ('post' === $type && $id) {
-                $link = get_edit_post_link((int)$id);
-                $title = get_the_title((int)$id);
-                echo '<a href="'.esc_url($link).'">'.esc_html($title ?: ('ID:'.$id)).'</a>';
-            } else {
-                echo esc_html($label ?: '—');
-            }
-        }
-        if ($col === 'andw_status') {
-            $s = $this->get_meta($post_id, '_andw_status','依頼');
-            $cls = '完了' === $s ? 'done' : '';
-            echo '<span class="andw-badge ' . esc_attr($cls) . '">' . esc_html($s) . '</span>';
-        }
-    }
+	public function col_content( $col, $post_id ) {
+		// 作業タイトル列の表示処理（post_titleを使用、旧メタからフォールバック）
+		if ( $col === 'work_title' ) {
+			$post_title     = get_post_field( 'post_title', $post_id );
+			$fallback_title = get_post_meta( $post_id, '_andw_work_title', true ) ?: get_post_meta( $post_id, '_andw_target_label', true );
+			$display_title  = $post_title ?: $fallback_title ?: __( 'データなし', 'andw-work-notes' );
+			echo esc_html( $display_title );
+		}
+		// 作業内容列の表示処理（post_contentを使用、旧メタからフォールバック）
+		if ( $col === 'work_content' ) {
+			$post_content     = get_post_field( 'post_content', $post_id );
+			$fallback_content = get_post_meta( $post_id, '_andw_work_content', true );
+			$raw_content      = $post_content ?: $fallback_content;
 
-    public function sortable_cols($cols) {
-        $cols['andw_requester'] = 'andw_requester';
-        $cols['andw_assignee'] = 'andw_assignee';
-        return $cols;
-    }
+			if ( ! empty( $raw_content ) ) {
+				// HTMLタグを除去し、40-60文字で要約
+				$plain_content     = wp_strip_all_tags( $raw_content );
+				$truncated_content = mb_strlen( $plain_content ) > 60 ? mb_substr( $plain_content, 0, 57 ) . '...' : $plain_content;
+				echo esc_html( $truncated_content );
+			} else {
+				echo '—';
+			}
+		}
+		if ( $col === 'andw_requester' ) {
+			$requester = $this->get_meta( $post_id, '_andw_requester' );
+			echo esc_html( $requester ?: '—' );
+		}
+		if ( $col === 'andw_assignee' ) {
+			$worker = $this->get_meta( $post_id, '_andw_worker' );
+			echo esc_html( $worker ?: '—' );
+		}
+		if ( $col === 'andw_target' ) {
+			$type  = $this->get_meta( $post_id, '_andw_target_type' );
+			$id    = $this->get_meta( $post_id, '_andw_target_id' );
+			$label = $this->get_meta( $post_id, '_andw_target_label' );
+			if ( 'post' === $type && $id ) {
+				$link  = get_edit_post_link( (int) $id );
+				$title = get_the_title( (int) $id );
+				echo '<a href="' . esc_url( $link ) . '">' . esc_html( $title ?: ( 'ID:' . $id ) ) . '</a>';
+			} else {
+				echo esc_html( $label ?: '—' );
+			}
+		}
+		if ( $col === 'andw_status' ) {
+			$s   = $this->get_meta( $post_id, '_andw_status', '依頼' );
+			$cls = '完了' === $s ? 'done' : '';
+			echo '<span class="andw-badge ' . esc_attr( $cls ) . '">' . esc_html( $s ) . '</span>';
+		}
+	}
 
-    public function handle_sortable_columns($query) {
-        if (!is_admin() || !$query->is_main_query()) return;
-        
-        $screen = get_current_screen();
-        if (!$screen || $screen->post_type !== self::CPT || $screen->base !== 'edit') return;
+	public function sortable_cols( $cols ) {
+		$cols['andw_requester'] = 'andw_requester';
+		$cols['andw_assignee']  = 'andw_assignee';
+		return $cols;
+	}
 
-        $orderby = $query->get('orderby');
-        if ($orderby === 'andw_requester') {
-            $query->set('meta_key', '_andw_requester');
-            $query->set('orderby', 'meta_value');
-        } elseif ($orderby === 'andw_assignee') {
-            $query->set('meta_key', '_andw_worker');
-            $query->set('orderby', 'meta_value');
-        }
-    }
+	public function handle_sortable_columns( $query ) {
+		if ( ! is_admin() || ! $query->is_main_query() ) {
+			return;
+		}
 
-    /**
-     * ブロックエディタ対応のためのメタフィールド登録
-     * 本番での保存バグを修正するための REST API 対応
-     */
-    public function register_meta_fields() {
-        // 投稿と固定ページに作業メモのメタフィールドを登録
-        $target_post_types = ['post', 'page'];
-        $all_meta_fields = [
-            '_andw_requester', '_andw_worker', '_andw_target_type', 
-            '_andw_target_id', '_andw_target_label', '_andw_status', '_andw_work_date',
-            // Phase 1: 互換性のための既存フィールド（段階的廃止予定）
-            '_andw_work_title', '_andw_work_content',
-            // Phase 2: CPT単一ソース化のための新フィールド
-            '_andw_bound_cpt_id'
-        ];
-        
-        foreach ($target_post_types as $post_type) {
-            foreach ($all_meta_fields as $meta_key) {
-                // 作業内容は複数行テキストなのでsanitize_textarea_fieldを使用
-                $sanitize_callback = ($meta_key === '_andw_work_content') ? 'sanitize_textarea_field' : 'sanitize_text_field';
-                
-                register_post_meta($post_type, $meta_key, [
-                    'show_in_rest' => true,
-                    'single' => true,
-                    'type' => 'string',
-                    'auth_callback' => function($allowed, $meta_key, $post_id, $user_id, $cap, $caps) {
-                        return current_user_can('edit_post', $post_id);
-                    },
-                    'sanitize_callback' => $sanitize_callback
-                ]);
-            }
-        }
-        
-        // 既存の作業メモCPT用メタフィールドも維持（互換性のため）
-        register_post_meta(self::CPT, '_andw_requester', [
-            'show_in_rest' => true,
-            'single' => true,
-            'type' => 'string',
-            'auth_callback' => function($allowed, $meta_key, $post_id, $user_id, $cap, $caps) {
-                return current_user_can('edit_post', $post_id);
-            },
-            'sanitize_callback' => 'sanitize_text_field'
-        ]);
-        
-        register_post_meta(self::CPT, '_andw_worker', [
-            'show_in_rest' => true,
-            'single' => true,
-            'type' => 'string', 
-            'auth_callback' => function($allowed, $meta_key, $post_id, $user_id, $cap, $caps) {
-                return current_user_can('edit_post', $post_id);
-            },
-            'sanitize_callback' => 'sanitize_text_field'
-        ]);
-        
-        // 正規リンク用メタフィールド（数値）
-        register_post_meta(self::CPT, '_andw_bound_post_id', [
-            'show_in_rest' => true,
-            'single' => true,
-            'type' => 'integer',
-            'auth_callback' => function($allowed, $meta_key, $post_id, $user_id, $cap, $caps) {
-                return current_user_can('edit_post', $post_id);
-            },
-            'sanitize_callback' => 'absint'
-        ]);
-        
-        // Phase 2: CPT用の残りメタフィールド
-        $cpt_meta_fields = ['_andw_target_type', '_andw_target_id', '_andw_status', '_andw_work_date'];
-        foreach ($cpt_meta_fields as $meta_key) {
-            register_post_meta(self::CPT, $meta_key, [
-                'show_in_rest' => true,
-                'single' => true,
-                'type' => 'string',
-                'auth_callback' => function($allowed, $meta_key, $post_id, $user_id, $cap, $caps) {
-                    return current_user_can('edit_post', $post_id);
-                },
-                'sanitize_callback' => 'sanitize_text_field'
-            ]);
-        }
-        
-        // 作業タイトル・作業内容メタフィールド：post/page用のみ（Gutenbergサイドバー入力用）
-        // CPT（andw_work_note）は標準のpost_title/post_contentを使用
-        $input_meta_post_types = ['post', 'page'];
-        
-        // _andw_work_title と _andw_work_content は上記ループで既に登録済みのため削除
-        
-        // CPT側の_andw_work_title, _andw_work_contentは重複のため削除
-        // （post/page側での登録で十分、CPTでは post_title/post_content を使用）
-        
-        $other_metas = [
-            '_andw_target_type', '_andw_target_id', '_andw_target_label', 
-            '_andw_status', '_andw_work_date'
-        ];
-        foreach ($other_metas as $meta_key) {
-            register_post_meta(self::CPT, $meta_key, [
-                'show_in_rest' => true,
-                'single' => true,
-                'type' => 'string',
-                'auth_callback' => function($allowed, $meta_key, $post_id, $user_id, $cap, $caps) {
-                    return current_user_can('edit_post', $post_id);
-                },
-                'sanitize_callback' => 'sanitize_text_field'
-            ]);
-        }
-        
-        // デバッグログ用（WP_DEBUG_LOG 有効時のみ）
-        if (defined('WP_DEBUG_LOG') && WP_DEBUG_LOG) {
-            andw_log(' Meta fields registered for block editor compatibility');
-        }
-    }
+		$screen = get_current_screen();
+		if ( ! $screen || $screen->post_type !== self::CPT || $screen->base !== 'edit' ) {
+			return;
+		}
 
-    public function box_parent_notes($post) {
-        if (!current_user_can('edit_post', $post->ID)) return;
-        wp_nonce_field(self::NONCE, self::NONCE);
+		$orderby = $query->get( 'orderby' );
+		if ( $orderby === 'andw_requester' ) {
+			$query->set( 'meta_key', '_andw_requester' );
+			$query->set( 'orderby', 'meta_value' );
+		} elseif ( $orderby === 'andw_assignee' ) {
+			$query->set( 'meta_key', '_andw_worker' );
+			$query->set( 'orderby', 'meta_value' );
+		}
+	}
 
-        // Plugin Check緩和: meta_queryは投稿に紐づく作業ノートを特定するため必須
-        // 推奨: wp_postmetaテーブルに INDEX(_andw_target_type, _andw_target_id) を作成
-        $args = [
-            'post_type' => self::CPT,
-            'posts_per_page' => 20,
-            'meta_query' => [ // phpcs:ignore WordPress.DB.SlowDBQuery.slow_db_query_meta_query -- 管理画面のフィルタ用途
-                'relation' => 'AND',
-                ['key' => '_andw_target_type', 'value' => 'post', 'compare' => '=', 'type' => 'CHAR'],
-                ['key' => '_andw_target_id', 'value' => (string)$post->ID, 'compare' => '=', 'type' => 'CHAR'],
-            ],
-            'orderby' => 'date',
-            'order' => 'DESC',
-        ];
-        $ids = andw_cached_ids_query($args, 60);
-        $notes = get_posts(['post__in' => $ids, 'orderby' => 'post__in', 'post_type' => self::CPT]);
+	/**
+	 * ブロックエディタ対応のためのメタフィールド登録
+	 * 本番での保存バグを修正するための REST API 対応
+	 */
+	public function register_meta_fields() {
+		// 投稿と固定ページに作業メモのメタフィールドを登録
+		$target_post_types = array( 'post', 'page' );
+		$all_meta_fields   = array(
+			'_andw_requester',
+			'_andw_worker',
+			'_andw_target_type',
+			'_andw_target_id',
+			'_andw_target_label',
+			'_andw_status',
+			'_andw_work_date',
+			// Phase 1: 互換性のための既存フィールド（段階的廃止予定）
+			'_andw_work_title',
+			'_andw_work_content',
+			// Phase 2: CPT単一ソース化のための新フィールド
+			'_andw_bound_cpt_id',
+		);
 
-        echo '<div class="andw-list">';
-        if ($notes) {
-            foreach ($notes as $n) {
-                $status = get_post_meta($n->ID, '_andw_status', true);
-                $req = get_post_meta($n->ID, '_andw_requester', true);
-                $worker = get_post_meta($n->ID, '_andw_worker', true);
-                $date = get_post_meta($n->ID, '_andw_work_date', true);
-                echo '<div class="andw-note-item">';
-                echo '<strong>'.esc_html(get_the_title($n)).'</strong> ';
-                echo '<span class="andw-badge ' . esc_attr($status==='完了'?'done':'') . '">' . esc_html($status ?: '—') . '</span><br>';
-                echo wp_kses_post(wpautop($n->post_content));
-                echo '<small>依頼元: '.esc_html($req ?: '—').' / 担当: '.esc_html($worker ?: '—').' / 実施日: '.esc_html($date ?: '—').'</small>';
-                echo ' / <a href="'.esc_url(get_edit_post_link($n->ID)).'">' . esc_html__('編集', 'andw-work-notes') . '</a>';
-                echo '</div>';
-            }
-        } else {
-            echo '<p>' . esc_html__('このコンテンツに紐づく作業メモはまだありません。', 'andw-work-notes') . '</p>';
-        }
-        echo '</div>';
+		foreach ( $target_post_types as $post_type ) {
+			foreach ( $all_meta_fields as $meta_key ) {
+				// 作業内容は複数行テキストなのでsanitize_textarea_fieldを使用
+				$sanitize_callback = ( $meta_key === '_andw_work_content' ) ? 'sanitize_textarea_field' : 'sanitize_text_field';
 
-        $req_opts = $this->normalize_option_data(self::OPT_REQUESTERS, []);
-        $wrk_opts = $this->normalize_option_data(self::OPT_WORKERS, $this->default_workers());
-        ?>
-        <hr>
-        <h4><?php esc_html_e('この投稿に作業メモを追加', 'andw-work-notes'); ?></h4>
+				register_post_meta(
+					$post_type,
+					$meta_key,
+					array(
+						'show_in_rest'      => true,
+						'single'            => true,
+						'type'              => 'string',
+						'auth_callback'     => function ( $allowed, $meta_key, $post_id, $user_id, $cap, $caps ) {
+							return current_user_can( 'edit_post', $post_id );
+						},
+						'sanitize_callback' => $sanitize_callback,
+					)
+				);
+			}
+		}
 
-        <p><label><?php esc_html_e('依頼元', 'andw-work-notes'); ?></label><br>
-            <?php $this->render_select_with_custom('andw_quick_requester', $req_opts, ''); ?>
-        </p>
+		// 既存の作業メモCPT用メタフィールドも維持（互換性のため）
+		register_post_meta(
+			self::CPT,
+			'_andw_requester',
+			array(
+				'show_in_rest'      => true,
+				'single'            => true,
+				'type'              => 'string',
+				'auth_callback'     => function ( $allowed, $meta_key, $post_id, $user_id, $cap, $caps ) {
+					return current_user_can( 'edit_post', $post_id );
+				},
+				'sanitize_callback' => 'sanitize_text_field',
+			)
+		);
 
-        <p><label><?php esc_html_e('内容（作業メモ本文）', 'andw-work-notes'); ?><br><textarea name="andw_quick_content" rows="4" style="width:100%;"></textarea></label></p>
+		register_post_meta(
+			self::CPT,
+			'_andw_worker',
+			array(
+				'show_in_rest'      => true,
+				'single'            => true,
+				'type'              => 'string',
+				'auth_callback'     => function ( $allowed, $meta_key, $post_id, $user_id, $cap, $caps ) {
+					return current_user_can( 'edit_post', $post_id );
+				},
+				'sanitize_callback' => 'sanitize_text_field',
+			)
+		);
 
-        <p class="andw-inline">
-            <label><?php esc_html_e('ステータス', 'andw-work-notes'); ?>
-                <select name="andw_quick_status">
-                    <option value="依頼"><?php esc_html_e('依頼', 'andw-work-notes'); ?></option>
-                    <option value="対応中"><?php esc_html_e('対応中', 'andw-work-notes'); ?></option>
-                    <option value="完了"><?php esc_html_e('完了', 'andw-work-notes'); ?></option>
-                </select>
-            </label>
+		// 正規リンク用メタフィールド（数値）
+		register_post_meta(
+			self::CPT,
+			'_andw_bound_post_id',
+			array(
+				'show_in_rest'      => true,
+				'single'            => true,
+				'type'              => 'integer',
+				'auth_callback'     => function ( $allowed, $meta_key, $post_id, $user_id, $cap, $caps ) {
+					return current_user_can( 'edit_post', $post_id );
+				},
+				'sanitize_callback' => 'absint',
+			)
+		);
 
-            <label><?php esc_html_e('実施日', 'andw-work-notes'); ?>
-                <input type="date" name="andw_quick_date" value="<?php echo esc_attr(current_time('Y-m-d'));?>">
-            </label>
+		// Phase 2: CPT用の残りメタフィールド
+		$cpt_meta_fields = array( '_andw_target_type', '_andw_target_id', '_andw_status', '_andw_work_date' );
+		foreach ( $cpt_meta_fields as $meta_key ) {
+			register_post_meta(
+				self::CPT,
+				$meta_key,
+				array(
+					'show_in_rest'      => true,
+					'single'            => true,
+					'type'              => 'string',
+					'auth_callback'     => function ( $allowed, $meta_key, $post_id, $user_id, $cap, $caps ) {
+						return current_user_can( 'edit_post', $post_id );
+					},
+					'sanitize_callback' => 'sanitize_text_field',
+				)
+			);
+		}
 
-            <label><?php esc_html_e('担当者', 'andw-work-notes'); ?></label>
-            <?php $this->render_select_with_custom('andw_quick_worker', $wrk_opts, wp_get_current_user()->display_name); ?>
-        </p>
-        <?php
-    }
+		// 作業タイトル・作業内容メタフィールド：post/page用のみ（Gutenbergサイドバー入力用）
+		// CPT（andw_work_note）は標準のpost_title/post_contentを使用
+		$input_meta_post_types = array( 'post', 'page' );
 
-    public function capture_quick_note_from_parent($post_id, $post) {
-        $nonce = isset($_POST[self::NONCE]) ? sanitize_text_field(wp_unslash($_POST[self::NONCE])) : '';
-        if (!isset($_POST[self::NONCE]) || !wp_verify_nonce($nonce, self::NONCE)) {
-            return;
-        }
-        if (!wp_doing_ajax() && (!isset($_POST['action']) || 'editpost' !== $_POST['action'])) {
-            return;
-        }
-        if (defined('DOING_AUTOSAVE') && DOING_AUTOSAVE) return;
-        if (!current_user_can('edit_post', $post_id)) return;
-        if (!in_array($post->post_type, get_post_types(['public'=>true], 'names'))) return;
+		// _andw_work_title と _andw_work_content は上記ループで既に登録済みのため削除
 
-        $content = isset($_POST['andw_quick_content']) ? sanitize_textarea_field(wp_unslash($_POST['andw_quick_content'])) : '';
-        if ($content === '') return;
+		// CPT側の_andw_work_title, _andw_work_contentは重複のため削除
+		// （post/page側での登録で十分、CPTでは post_title/post_content を使用）
 
-        $requester = $this->resolve_select_or_custom('andw_quick_requester');
-        $status    = sanitize_text_field(wp_unslash($_POST['andw_quick_status'] ?? '依頼'));
-        $date      = sanitize_text_field(wp_unslash($_POST['andw_quick_date'] ?? current_time('Y-m-d')));
-        $workerVal = $this->resolve_select_or_custom('andw_quick_worker');
+		$other_metas = array(
+			'_andw_target_type',
+			'_andw_target_id',
+			'_andw_target_label',
+			'_andw_status',
+			'_andw_work_date',
+		);
+		foreach ( $other_metas as $meta_key ) {
+			register_post_meta(
+				self::CPT,
+				$meta_key,
+				array(
+					'show_in_rest'      => true,
+					'single'            => true,
+					'type'              => 'string',
+					'auth_callback'     => function ( $allowed, $meta_key, $post_id, $user_id, $cap, $caps ) {
+						return current_user_can( 'edit_post', $post_id );
+					},
+					'sanitize_callback' => 'sanitize_text_field',
+				)
+			);
+		}
 
-        $note_id = wp_insert_post([
-            'post_type' => self::CPT,
-            'post_status' => 'publish',
-            'post_title' => '作業メモ ' . current_time('Y-m-d H:i'),
-            'post_content' => $content,
-            'post_author' => get_current_user_id(),
-        ]);
+		// デバッグログ用（WP_DEBUG_LOG 有効時のみ）
+		if ( defined( 'WP_DEBUG_LOG' ) && WP_DEBUG_LOG ) {
+			andw_log( ' Meta fields registered for block editor compatibility' );
+		}
+	}
 
-        if ($note_id && !is_wp_error($note_id)) {
-            update_post_meta($note_id, '_andw_target_type', 'post');
-            update_post_meta($note_id, '_andw_target_id', (string)$post_id);
-            // update_post_meta($note_id, '_andw_target_label', get_the_title($post_id)); // 廃止：作業タイトルに統合
-            update_post_meta($note_id, '_andw_requester', sanitize_text_field($requester));
-            update_post_meta($note_id, '_andw_worker', sanitize_text_field($workerVal));
-            update_post_meta($note_id, '_andw_status', $status);
-            update_post_meta($note_id, '_andw_work_date', $date);
-            
-            // 正規リンク用メタフィールドを自動付与
-            update_post_meta($note_id, '_andw_bound_post_id', (int)$post_id);
-        }
-    }
+	public function box_parent_notes( $post ) {
+		if ( ! current_user_can( 'edit_post', $post->ID ) ) {
+			return;
+		}
+		wp_nonce_field( self::NONCE, self::NONCE );
 
-    /**
-     * Gutenberg対応: 投稿/固定ページ保存時にメタデータから作業メモCPTを自動生成
-     * save_post_post, save_post_page フックで実行
-     */
-    public function auto_create_work_note_from_meta($post_id, $post) {
-        // ガード条件
-        if (wp_is_post_revision($post_id)) return;
-        if (wp_is_post_autosave($post_id)) return;
-        if (defined('DOING_AUTOSAVE') && DOING_AUTOSAVE) return;
-        if (!current_user_can('edit_post', $post_id)) return;
-        
-        // 投稿タイプの制限：postとpageのみ対象（CPT自身は除外）
-        if (!in_array($post->post_type, ['post', 'page'])) {
-            if (defined('WP_DEBUG') && WP_DEBUG && defined('WP_DEBUG_LOG') && WP_DEBUG_LOG) {
-                andw_log(' Skipping auto-create for post_type: ' . $post->post_type . ' (ID: ' . $post_id . ')');
-            }
-            return;
-        }
-        
-        // 最新値取得の強化：RESTリクエスト時は$_POST['meta']を優先、通常時は強制キャッシュクリア
-        $is_rest_request = defined('REST_REQUEST') && REST_REQUEST;
-        
-        // 全ての場合でキャッシュクリアを実行（最新値取得のため）
-        wp_cache_delete($post_id, 'post_meta');
-        clean_post_cache($post_id);
-        
-        if ($is_rest_request && isset($_POST['meta'])) {
-            // nonce検証は上位メソッドで実施済み
-            // RESTリクエスト時：$_POST['meta']から直接最新値を取得（最優先）
+		// Plugin Check緩和: meta_queryは投稿に紐づく作業ノートを特定するため必須
+		// 推奨: wp_postmetaテーブルに INDEX(_andw_target_type, _andw_target_id) を作成
+		$args  = array(
+			'post_type'      => self::CPT,
+			'posts_per_page' => 20,
+			'meta_query'     => array( // phpcs:ignore WordPress.DB.SlowDBQuery.slow_db_query_meta_query -- 管理画面のフィルタ用途
+				'relation' => 'AND',
+				array(
+		'key'     => '_andw_target_type',
+		'value'   => 'post',
+		'compare' => '=',
+		'type'    => 'CHAR',
+				),
+				array(
+				'key'     => '_andw_target_id',
+				'value'   => (string) $post->ID,
+				'compare' => '=',
+				'type'    => 'CHAR',
+				),
+			),
+			'orderby'        => 'date',
+			'order'          => 'DESC',
+		);
+		$ids   = andw_cached_ids_query( $args, 60 );
+		$notes = get_posts(
+			array(
+				'post__in'  => $ids,
+				'orderby'   => 'post__in',
+				'post_type' => self::CPT,
+			)
+		);
+
+		echo '<div class="andw-list">';
+		if ( $notes ) {
+			foreach ( $notes as $n ) {
+				$status = get_post_meta( $n->ID, '_andw_status', true );
+				$req    = get_post_meta( $n->ID, '_andw_requester', true );
+				$worker = get_post_meta( $n->ID, '_andw_worker', true );
+				$date   = get_post_meta( $n->ID, '_andw_work_date', true );
+				echo '<div class="andw-note-item">';
+				echo '<strong>' . esc_html( get_the_title( $n ) ) . '</strong> ';
+				echo '<span class="andw-badge ' . esc_attr( $status === '完了' ? 'done' : '' ) . '">' . esc_html( $status ?: '—' ) . '</span><br>';
+				echo wp_kses_post( wpautop( $n->post_content ) );
+				echo '<small>依頼元: ' . esc_html( $req ?: '—' ) . ' / 担当: ' . esc_html( $worker ?: '—' ) . ' / 実施日: ' . esc_html( $date ?: '—' ) . '</small>';
+				echo ' / <a href="' . esc_url( get_edit_post_link( $n->ID ) ) . '">' . esc_html__( '編集', 'andw-work-notes' ) . '</a>';
+				echo '</div>';
+			}
+		} else {
+			echo '<p>' . esc_html__( 'このコンテンツに紐づく作業メモはまだありません。', 'andw-work-notes' ) . '</p>';
+		}
+		echo '</div>';
+
+		$req_opts = $this->normalize_option_data( self::OPT_REQUESTERS, array() );
+		$wrk_opts = $this->normalize_option_data( self::OPT_WORKERS, $this->default_workers() );
+		?>
+		<hr>
+		<h4><?php esc_html_e( 'この投稿に作業メモを追加', 'andw-work-notes' ); ?></h4>
+
+		<p><label><?php esc_html_e( '依頼元', 'andw-work-notes' ); ?></label><br>
+			<?php $this->render_select_with_custom( 'andw_quick_requester', $req_opts, '' ); ?>
+		</p>
+
+		<p><label><?php esc_html_e( '内容（作業メモ本文）', 'andw-work-notes' ); ?><br><textarea name="andw_quick_content" rows="4" style="width:100%;"></textarea></label></p>
+
+		<p class="andw-inline">
+			<label><?php esc_html_e( 'ステータス', 'andw-work-notes' ); ?>
+				<select name="andw_quick_status">
+					<option value="依頼"><?php esc_html_e( '依頼', 'andw-work-notes' ); ?></option>
+					<option value="対応中"><?php esc_html_e( '対応中', 'andw-work-notes' ); ?></option>
+					<option value="完了"><?php esc_html_e( '完了', 'andw-work-notes' ); ?></option>
+				</select>
+			</label>
+
+			<label><?php esc_html_e( '実施日', 'andw-work-notes' ); ?>
+				<input type="date" name="andw_quick_date" value="<?php echo esc_attr( current_time( 'Y-m-d' ) ); ?>">
+			</label>
+
+			<label><?php esc_html_e( '担当者', 'andw-work-notes' ); ?></label>
+			<?php $this->render_select_with_custom( 'andw_quick_worker', $wrk_opts, wp_get_current_user()->display_name ); ?>
+		</p>
+		<?php
+	}
+
+	public function capture_quick_note_from_parent( $post_id, $post ) {
+		$nonce = isset( $_POST[ self::NONCE ] ) ? sanitize_text_field( wp_unslash( $_POST[ self::NONCE ] ) ) : '';
+		if ( ! isset( $_POST[ self::NONCE ] ) || ! wp_verify_nonce( $nonce, self::NONCE ) ) {
+			return;
+		}
+		if ( ! wp_doing_ajax() && ( ! isset( $_POST['action'] ) || 'editpost' !== $_POST['action'] ) ) {
+			return;
+		}
+		if ( defined( 'DOING_AUTOSAVE' ) && DOING_AUTOSAVE ) {
+			return;
+		}
+		if ( ! current_user_can( 'edit_post', $post_id ) ) {
+			return;
+		}
+		if ( ! in_array( $post->post_type, get_post_types( array( 'public' => true ), 'names' ) ) ) {
+			return;
+		}
+
+		$content = isset( $_POST['andw_quick_content'] ) ? sanitize_textarea_field( wp_unslash( $_POST['andw_quick_content'] ) ) : '';
+		if ( $content === '' ) {
+			return;
+		}
+
+		$requester = $this->resolve_select_or_custom( 'andw_quick_requester' );
+		$status    = sanitize_text_field( wp_unslash( $_POST['andw_quick_status'] ?? '依頼' ) );
+		$date      = sanitize_text_field( wp_unslash( $_POST['andw_quick_date'] ?? current_time( 'Y-m-d' ) ) );
+		$workerVal = $this->resolve_select_or_custom( 'andw_quick_worker' );
+
+		$note_id = wp_insert_post(
+			array(
+				'post_type'    => self::CPT,
+				'post_status'  => 'publish',
+				'post_title'   => '作業メモ ' . current_time( 'Y-m-d H:i' ),
+				'post_content' => $content,
+				'post_author'  => get_current_user_id(),
+			)
+		);
+
+		if ( $note_id && ! is_wp_error( $note_id ) ) {
+			update_post_meta( $note_id, '_andw_target_type', 'post' );
+			update_post_meta( $note_id, '_andw_target_id', (string) $post_id );
+			// update_post_meta($note_id, '_andw_target_label', get_the_title($post_id)); // 廃止：作業タイトルに統合
+			update_post_meta( $note_id, '_andw_requester', sanitize_text_field( $requester ) );
+			update_post_meta( $note_id, '_andw_worker', sanitize_text_field( $workerVal ) );
+			update_post_meta( $note_id, '_andw_status', $status );
+			update_post_meta( $note_id, '_andw_work_date', $date );
+
+			// 正規リンク用メタフィールドを自動付与
+			update_post_meta( $note_id, '_andw_bound_post_id', (int) $post_id );
+		}
+	}
+
+	/**
+	 * Gutenberg対応: 投稿/固定ページ保存時にメタデータから作業メモCPTを自動生成
+	 * save_post_post, save_post_page フックで実行
+	 */
+	public function auto_create_work_note_from_meta( $post_id, $post ) {
+		// ガード条件
+		if ( wp_is_post_revision( $post_id ) ) {
+			return;
+		}
+		if ( wp_is_post_autosave( $post_id ) ) {
+			return;
+		}
+		if ( defined( 'DOING_AUTOSAVE' ) && DOING_AUTOSAVE ) {
+			return;
+		}
+		if ( ! current_user_can( 'edit_post', $post_id ) ) {
+			return;
+		}
+
+		// 投稿タイプの制限：postとpageのみ対象（CPT自身は除外）
+		if ( ! in_array( $post->post_type, array( 'post', 'page' ) ) ) {
+			if ( defined( 'WP_DEBUG' ) && WP_DEBUG && defined( 'WP_DEBUG_LOG' ) && WP_DEBUG_LOG ) {
+				andw_log( ' Skipping auto-create for post_type: ' . $post->post_type . ' (ID: ' . $post_id . ')' );
+			}
+			return;
+		}
+
+		// 最新値取得の強化：RESTリクエスト時は$_POST['meta']を優先、通常時は強制キャッシュクリア
+		$is_rest_request = defined( 'REST_REQUEST' ) && REST_REQUEST;
+
+		// 全ての場合でキャッシュクリアを実行（最新値取得のため）
+		wp_cache_delete( $post_id, 'post_meta' );
+		clean_post_cache( $post_id );
+
+		if ( $is_rest_request && isset( $_POST['meta'] ) ) {
+			// nonce検証は上位メソッドで実施済み
+			// RESTリクエスト時：$_POST['meta']から直接最新値を取得（最優先）
             // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- 次行でサニタイズ
-            $meta = isset($_POST['meta']) ? (array) wp_unslash($_POST['meta']) : [];
-            $meta = array_map('sanitize_text_field', $meta);
-            $target_type = isset($meta['_andw_target_type']) ? sanitize_text_field($meta['_andw_target_type']) : get_post_meta($post_id, '_andw_target_type', true);
-            $target_id = isset($meta['_andw_target_id']) ? absint($meta['_andw_target_id']) : get_post_meta($post_id, '_andw_target_id', true);
-            $target_label = isset($meta['_andw_target_label']) ? sanitize_text_field($meta['_andw_target_label']) : get_post_meta($post_id, '_andw_target_label', true);
-            $requester = isset($meta['_andw_requester']) ? sanitize_text_field($meta['_andw_requester']) : get_post_meta($post_id, '_andw_requester', true);
-            $worker = isset($meta['_andw_worker']) ? sanitize_text_field($meta['_andw_worker']) : get_post_meta($post_id, '_andw_worker', true);
-            $status = isset($meta['_andw_status']) ? sanitize_text_field($meta['_andw_status']) : get_post_meta($post_id, '_andw_status', true);
-            $work_date = isset($meta['_andw_work_date']) ? sanitize_text_field($meta['_andw_work_date']) : get_post_meta($post_id, '_andw_work_date', true);
-            $work_title_check = isset($meta['_andw_work_title']) ? sanitize_text_field($meta['_andw_work_title']) : '';
-            $work_content_check = isset($meta['_andw_work_content']) ? wp_kses_post($meta['_andw_work_content']) : '';
-        } else {
-            // 通常のリクエスト時：強制キャッシュクリア後にメタデータ取得
-            $target_type = get_post_meta($post_id, '_andw_target_type', true);
-            $target_id = get_post_meta($post_id, '_andw_target_id', true);
-            $target_label = get_post_meta($post_id, '_andw_target_label', true);
-            $requester = get_post_meta($post_id, '_andw_requester', true);
-            $worker = get_post_meta($post_id, '_andw_worker', true);
-            $status = get_post_meta($post_id, '_andw_status', true);
-            $work_date = get_post_meta($post_id, '_andw_work_date', true);
-            $work_title_check = get_post_meta($post_id, '_andw_work_title', true);
-            $work_content_check = get_post_meta($post_id, '_andw_work_content', true);
-        }
-        
-        // デバッグログ: メタデータ取得状況（最新値取得の確認用）
-        if (defined('WP_DEBUG_LOG') && WP_DEBUG_LOG) {
-            $current_action = current_action();
-            $doing_autosave = defined('DOING_AUTOSAVE') && DOING_AUTOSAVE ? 'true' : 'false';
-            $is_revision = wp_is_post_revision($post_id) ? 'true' : 'false';
-            $can_edit = current_user_can('edit_post', $post_id) ? 'true' : 'false';
-            $post_status = get_post_status($post_id);
-            
-            andw_log('=== 保存処理開始 ===');
-            andw_log('Post ID: ' . $post_id . ', Type: ' . $post->post_type . ', Status: ' . $post_status);
-            andw_log('Context: Action=' . $current_action . ', Autosave=' . $doing_autosave . ', REST=' . ($is_rest_request ? 'true' : 'false') . ', Revision=' . $is_revision . ', CanEdit=' . $can_edit);
-            
-            // メタデータ取得方法とその結果をログ出力
-            $meta_source = $is_rest_request && isset($_POST['meta']) ? 'REST_POST' : 'get_post_meta';
-            andw_log('Source: ' . $meta_source . ', title="' . $work_title_check . '", content="' . $work_content_check . '"');
-            andw_log('Other meta: requester="' . $requester . '", worker="' . $worker . '", status="' . $status . '"');
-            
-            // RESTリクエスト時の詳細比較
-            if ($is_rest_request && isset($_POST['meta'])) {
-                // nonce検証を明示的に実行
-                if (isset($_POST[self::NONCE]) && wp_verify_nonce(sanitize_text_field(wp_unslash($_POST[self::NONCE])), self::NONCE)) {
+			$meta               = isset( $_POST['meta'] ) ? (array) wp_unslash( $_POST['meta'] ) : array();
+			$meta               = array_map( 'sanitize_text_field', $meta );
+			$target_type        = isset( $meta['_andw_target_type'] ) ? sanitize_text_field( $meta['_andw_target_type'] ) : get_post_meta( $post_id, '_andw_target_type', true );
+			$target_id          = isset( $meta['_andw_target_id'] ) ? absint( $meta['_andw_target_id'] ) : get_post_meta( $post_id, '_andw_target_id', true );
+			$target_label       = isset( $meta['_andw_target_label'] ) ? sanitize_text_field( $meta['_andw_target_label'] ) : get_post_meta( $post_id, '_andw_target_label', true );
+			$requester          = isset( $meta['_andw_requester'] ) ? sanitize_text_field( $meta['_andw_requester'] ) : get_post_meta( $post_id, '_andw_requester', true );
+			$worker             = isset( $meta['_andw_worker'] ) ? sanitize_text_field( $meta['_andw_worker'] ) : get_post_meta( $post_id, '_andw_worker', true );
+			$status             = isset( $meta['_andw_status'] ) ? sanitize_text_field( $meta['_andw_status'] ) : get_post_meta( $post_id, '_andw_status', true );
+			$work_date          = isset( $meta['_andw_work_date'] ) ? sanitize_text_field( $meta['_andw_work_date'] ) : get_post_meta( $post_id, '_andw_work_date', true );
+			$work_title_check   = isset( $meta['_andw_work_title'] ) ? sanitize_text_field( $meta['_andw_work_title'] ) : '';
+			$work_content_check = isset( $meta['_andw_work_content'] ) ? wp_kses_post( $meta['_andw_work_content'] ) : '';
+		} else {
+			// 通常のリクエスト時：強制キャッシュクリア後にメタデータ取得
+			$target_type        = get_post_meta( $post_id, '_andw_target_type', true );
+			$target_id          = get_post_meta( $post_id, '_andw_target_id', true );
+			$target_label       = get_post_meta( $post_id, '_andw_target_label', true );
+			$requester          = get_post_meta( $post_id, '_andw_requester', true );
+			$worker             = get_post_meta( $post_id, '_andw_worker', true );
+			$status             = get_post_meta( $post_id, '_andw_status', true );
+			$work_date          = get_post_meta( $post_id, '_andw_work_date', true );
+			$work_title_check   = get_post_meta( $post_id, '_andw_work_title', true );
+			$work_content_check = get_post_meta( $post_id, '_andw_work_content', true );
+		}
+
+		// デバッグログ: メタデータ取得状況（最新値取得の確認用）
+		if ( defined( 'WP_DEBUG_LOG' ) && WP_DEBUG_LOG ) {
+			$current_action = current_action();
+			$doing_autosave = defined( 'DOING_AUTOSAVE' ) && DOING_AUTOSAVE ? 'true' : 'false';
+			$is_revision    = wp_is_post_revision( $post_id ) ? 'true' : 'false';
+			$can_edit       = current_user_can( 'edit_post', $post_id ) ? 'true' : 'false';
+			$post_status    = get_post_status( $post_id );
+
+			andw_log( '=== 保存処理開始 ===' );
+			andw_log( 'Post ID: ' . $post_id . ', Type: ' . $post->post_type . ', Status: ' . $post_status );
+			andw_log( 'Context: Action=' . $current_action . ', Autosave=' . $doing_autosave . ', REST=' . ( $is_rest_request ? 'true' : 'false' ) . ', Revision=' . $is_revision . ', CanEdit=' . $can_edit );
+
+			// メタデータ取得方法とその結果をログ出力
+			$meta_source = $is_rest_request && isset( $_POST['meta'] ) ? 'REST_POST' : 'get_post_meta';
+			andw_log( 'Source: ' . $meta_source . ', title="' . $work_title_check . '", content="' . $work_content_check . '"' );
+			andw_log( 'Other meta: requester="' . $requester . '", worker="' . $worker . '", status="' . $status . '"' );
+
+			// RESTリクエスト時の詳細比較
+			if ( $is_rest_request && isset( $_POST['meta'] ) ) {
+				// nonce検証を明示的に実行
+				if ( isset( $_POST[ self::NONCE ] ) && wp_verify_nonce( sanitize_text_field( wp_unslash( $_POST[ self::NONCE ] ) ), self::NONCE ) ) {
                     // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- 次行でサニタイズ
-                    $meta_compare = isset($_POST['meta']) ? (array) wp_unslash($_POST['meta']) : [];
-                    $meta_compare = array_map('sanitize_text_field', $meta_compare);
-                    $rest_work_title = isset($meta_compare['_andw_work_title']) ? sanitize_text_field($meta_compare['_andw_work_title']) : 'not_set';
-                    $rest_work_content = isset($meta_compare['_andw_work_content']) ? wp_kses_post($meta_compare['_andw_work_content']) : 'not_set';
-                    $db_work_title = get_post_meta($post_id, '_andw_work_title', true);
-                    $db_work_content = get_post_meta($post_id, '_andw_work_content', true);
+					$meta_compare      = isset( $_POST['meta'] ) ? (array) wp_unslash( $_POST['meta'] ) : array();
+					$meta_compare      = array_map( 'sanitize_text_field', $meta_compare );
+					$rest_work_title   = isset( $meta_compare['_andw_work_title'] ) ? sanitize_text_field( $meta_compare['_andw_work_title'] ) : 'not_set';
+					$rest_work_content = isset( $meta_compare['_andw_work_content'] ) ? wp_kses_post( $meta_compare['_andw_work_content'] ) : 'not_set';
+					$db_work_title     = get_post_meta( $post_id, '_andw_work_title', true );
+					$db_work_content   = get_post_meta( $post_id, '_andw_work_content', true );
 
-                    andw_log('META_COMPARE] REST title: "' . $rest_work_title . '" vs DB title: "' . $db_work_title . '"');
-                    andw_log('META_COMPARE] REST content: "' . $rest_work_content . '" vs DB content: "' . $db_work_content . '"');
-                }
-            }
-            
-            // 既存CPTの確認: meta_queryで投稿IDに紐づく作業ノートを検索
-            // Plugin Check緩和: 推奨 INDEX(meta_key, meta_value) for _andw_bound_post_id
-            $args = [
-                'post_type' => self::CPT,
-                'posts_per_page' => 1,
-                'meta_query' => [ // phpcs:ignore WordPress.DB.SlowDBQuery.slow_db_query_meta_query -- 管理画面のフィルタ用途
-                    [
-                        'key' => '_andw_bound_post_id',
-                        'value' => $post_id,
-                        'compare' => '=',
-                        'type' => 'CHAR'
-                    ]
-                ]
-            ];
-            $existing_ids = andw_cached_ids_query($args, 60);
-            $existing_notes = !empty($existing_ids) ? get_posts(['post__in' => $existing_ids, 'post_type' => self::CPT]) : [];
-            andw_log('SAVE_ANALYSIS] Existing CPT count for this post: ' . count($existing_notes));
-            if (!empty($existing_notes)) {
-                andw_log('SAVE_ANALYSIS] Existing CPT ID: ' . $existing_notes[0]->ID . ', Title: "' . $existing_notes[0]->post_title . '"');
-            }
-        }
-        
-        // コンテンツ判定の緩和：作業タイトル・作業内容いずれかがあればCPT作成を実行
-        $has_work_fields = !empty($work_title_check) || !empty($work_content_check);
-        $has_other_fields = !empty($target_type) || !empty($target_id) || !empty($target_label) || 
-                           !empty($requester) || !empty($worker) || !empty($status) || !empty($work_date);
-        $has_content = $has_work_fields || $has_other_fields;
-        
-        // デバッグログ強化：各フィールドの状態を詳細出力
-        if (defined('WP_DEBUG_LOG') && WP_DEBUG_LOG) {
-            $fields_status = [
-                'work_title' => !empty($work_title_check) ? 'set' : 'empty',
-                'work_content' => !empty($work_content_check) ? 'set' : 'empty',
-                'target_type' => !empty($target_type) ? 'set' : 'empty',
-                'target_id' => !empty($target_id) ? 'set' : 'empty',
-                'target_label' => !empty($target_label) ? 'set' : 'empty',
-                'requester' => !empty($requester) ? 'set' : 'empty',
-                'worker' => !empty($worker) ? 'set' : 'empty',
-                'status' => !empty($status) ? 'set' : 'empty',
-                'work_date' => !empty($work_date) ? 'set' : 'empty'
-            ];
-            andw_log('CONTENT_CHECK] Fields status: ' . wp_json_encode($fields_status));
-            andw_log('CONTENT_CHECK] has_work_fields=' . ($has_work_fields ? 'true' : 'false') . ' has_other_fields=' . ($has_other_fields ? 'true' : 'false') . ' final_decision=' . ($has_content ? 'proceed' : 'skip'));
-        }
-        
-        // コンソール出力（ブラウザ開発者ツールで確認可能）
-        if (!$has_content) {
-            $console_msg = 'ANDW: No content detected - all fields empty';
-            $fields_debug = 'work_title=' . ($work_title_check ?: 'empty') . ', work_content=' . ($work_content_check ?: 'empty');
-            
-            // JavaScriptコンソール出力用のスクリプト追加
-            add_action('admin_footer', function() use ($console_msg, $fields_debug) {
-                echo '<script>console.warn("' . esc_js($console_msg) . '"); console.log("' . esc_js($fields_debug) . '");</script>';
-            });
-            
-            if (defined('WP_DEBUG_LOG') && WP_DEBUG_LOG) {
-                andw_log('SAVE_ANALYSIS] SKIP: No content detected - work_title="' . $work_title_check . '" work_content="' . $work_content_check . '" other_fields_empty=true');
-            }
-            return;
-        } else {
-            // 処理続行の場合もログ出力
-            if (defined('WP_DEBUG_LOG') && WP_DEBUG_LOG) {
-                $reason = $has_work_fields ? 'work_fields_present' : 'other_fields_present';
-                andw_log('SAVE_ANALYSIS] PROCEED: Content detected, reason=' . $reason);
-            }
-        }
-        
-        // 段階2: REST APIリクエスト時のメタ準備完了検証（緩和版）
-        if (defined('REST_REQUEST') && REST_REQUEST) {
-            // 作業フィールドの状態をチェック
-            $work_title_empty = empty($work_title_check);
-            $work_content_empty = empty($work_content_check);
-            $both_work_fields_empty = $work_title_empty && $work_content_empty;
-            
-            if (defined('WP_DEBUG_LOG') && WP_DEBUG_LOG) {
-                andw_log('REST_CHECK] work_title_empty=' . ($work_title_empty ? 'true' : 'false') . ' work_content_empty=' . ($work_content_empty ? 'true' : 'false'));
-            }
-            
-            // 作業フィールドが両方空で、かつ他のメタフィールドも空の場合のみ保留
-            if ($both_work_fields_empty) {
-                $other_meta_empty = empty($requester) && empty($worker) && empty($status) && empty($target_label);
-                
-                if ($other_meta_empty) {
-                    if (defined('WP_DEBUG_LOG') && WP_DEBUG_LOG) {
-                        andw_log('SAVE_ANALYSIS] SKIP: REST request with all meta empty, flagging for retry on post ' . $post_id);
-                    }
-                    
-                    // コンソール出力
-                    add_action('admin_footer', function() use ($post_id) {
-                        echo '<script>console.warn("ANDW: REST request with all meta empty, retry flagged for post ' . esc_js($post_id) . '");</script>';
-                    });
-                    
-                    // 次回save_postで再処理するためのフラグを設定
-                    update_post_meta($post_id, '_andw_pending_cpt_creation', 1);
-                    return;
-                }
-            } else {
-                // 作業フィールドのいずれかがある場合は即座に処理
-                delete_post_meta($post_id, '_andw_pending_cpt_creation');
-                if (defined('WP_DEBUG_LOG') && WP_DEBUG_LOG) {
-                    andw_log('SAVE_ANALYSIS] REST work fields present, proceeding immediately');
-                }
-            }
-        }
-        
-        // フラグがある場合の再処理ロジック
-        $pending_flag = get_post_meta($post_id, '_andw_pending_cpt_creation', true);
-        if ($pending_flag) {
-            if (defined('WP_DEBUG_LOG') && WP_DEBUG_LOG) {
-                andw_log('SAVE_ANALYSIS] Processing delayed CPT creation for post ' . $post_id);
-            }
-            
-            // コンソール出力
-            add_action('admin_footer', function() use ($post_id) {
-                echo '<script>console.info("ANDW: Processing delayed CPT creation for post ' . esc_js($post_id) . '");</script>';
-            });
-            
-            delete_post_meta($post_id, '_andw_pending_cpt_creation');
-        }
-        
-        // 重複防止のためのハッシュ生成（取得済みの最新値を使用）
-        $work_title = $work_title_check;
-        $work_content = $work_content_check;
-        
-        $meta_payload = [
-            'target_type' => $target_type,
-            'target_id' => $target_id,
-            'target_label' => $target_label,
-            'requester' => $requester,
-            'worker' => $worker,
-            'status' => $status,
-            'work_date' => $work_date,
-            'work_title' => $work_title,
-            'work_content' => $work_content
-        ];
-        $current_hash = md5(wp_json_encode($meta_payload));
-        $last_hash = get_post_meta($post_id, '_andw_last_sync_hash', true);
-        
-        // ハッシュによる重複防止チェック（簡素化）
-        $hash_result = ($current_hash === $last_hash) ? 'same' : 'diff';
-        if (defined('WP_DEBUG_LOG') && WP_DEBUG_LOG) {
-            andw_log(' hash current=' . substr($current_hash, 0, 8) . ' last=' . substr($last_hash ?: 'none', 0, 8) . ' result=' . $hash_result);
-        }
-        
-        // ハッシュが同じなら重複作成を防止してスキップ
-        if ($current_hash === $last_hash) {
-            if (defined('WP_DEBUG_LOG') && WP_DEBUG_LOG) {
-                andw_log('SAVE_POST] SKIP: Hash unchanged - preventing duplicate creation');
-            }
-            return;
-        }
-        
-        // wp_after_insert_postとの重複を防ぐため、一定時間内の作成をスキップ
-        $recent_create_flag = get_transient('andw_recent_create_' . $post_id);
-        if ($recent_create_flag) {
-            if (defined('WP_DEBUG_LOG') && WP_DEBUG_LOG) {
-                andw_log('SAVE_POST] SKIP: Recent creation detected, avoiding duplicate');
-            }
-            return;
-        }
-        
-        if (defined('WP_DEBUG_LOG') && WP_DEBUG_LOG) {
-            andw_log('SAVE_POST] Proceeding with CPT creation: hash changed');
-        }
-        
-        // 作業メモCPT作成または更新処理
-        $user_work_title = $work_title ?: $target_label ?: '';
-        $user_work_content = $work_content ?: '';
-        
-        // 実値がある場合は使用、なければフォールバック
-        if (!empty($user_work_title)) {
-            $note_title = sanitize_text_field($user_work_title);
-            if (defined('WP_DEBUG_LOG') && WP_DEBUG_LOG) {
-                andw_log('SAVE_ANALYSIS] Using user work_title as post_title: ' . $note_title);
-            }
-        } else {
-            $note_title = '作業メモ ' . current_time('Y-m-d H:i');
-            if (defined('WP_DEBUG_LOG') && WP_DEBUG_LOG) {
-                andw_log('SAVE_ANALYSIS] No work_title found, using fallback: ' . $note_title);
-            }
-        }
-        
-        if (!empty($user_work_content)) {
-            $note_content = wp_kses_post($user_work_content);
-            if (defined('WP_DEBUG_LOG') && WP_DEBUG_LOG) {
-                andw_log('SAVE_ANALYSIS] Using user work_content as post_content');
-            }
-        } else {
-            $note_content = $this->generate_work_note_content($meta_payload, $post);
-            if (defined('WP_DEBUG_LOG') && WP_DEBUG_LOG) {
-                andw_log('SAVE_ANALYSIS] No work_content found, using generated content');
-            }
-        }
-        
-        // 常に新規CPTを作成（上書きしない）
-        $note_id = wp_insert_post([
-            'post_type' => self::CPT,
-            'post_status' => 'publish',
-            'post_title' => $note_title,
-            'post_content' => $note_content,
-            'post_author' => get_current_user_id(),
-            'post_date' => current_time('mysql'),
-            'post_date_gmt' => gmdate('Y-m-d H:i:s'),
-        ], true);
-        
-        // 新規作成後の確実なキャッシュクリア
-        if (!is_wp_error($note_id) && $note_id) {
-            clean_post_cache($note_id);
-            clean_post_cache($post_id);
-            
-            if (defined('WP_DEBUG_LOG') && WP_DEBUG_LOG) {
-                andw_log('ALWAYS_CREATE] New CPT created successfully: id=' . $note_id . ' title="' . $note_title . '"');
-            }
-        }
-        
-        if (!is_wp_error($note_id) && $note_id) {
-            if (defined('WP_DEBUG_LOG') && WP_DEBUG_LOG) {
-                andw_log('SAVE_ANALYSIS] === CPT作成成功 === ID: ' . $note_id . ', Title: "' . $note_title . '"');
-            }
-            
-            // 作業メモCPTにメタデータを設定
-            update_post_meta($note_id, '_andw_target_type', $target_type ?: 'post');
-            update_post_meta($note_id, '_andw_target_id', (string)$post_id);
-            // update_post_meta($note_id, '_andw_target_label', $target_label ?: get_the_title($post_id)); // 廃止：作業タイトルに統合
-            update_post_meta($note_id, '_andw_requester', $requester);
-            update_post_meta($note_id, '_andw_worker', $worker);
-            update_post_meta($note_id, '_andw_status', $status ?: '依頼');
-            update_post_meta($note_id, '_andw_work_date', $work_date ?: current_time('Y-m-d'));
-            
-            // 旧処理：CPTへのメタフィールド転送は不要（post_title/post_contentに直接保存済み）
-            if (defined('WP_DEBUG_LOG') && WP_DEBUG_LOG) {
-                andw_log('SAVE_ANALYSIS] CPT created with direct post_title/post_content - no meta transfer needed');
-            }
-            
-            // 正規リンク用メタフィールドを設定
-            update_post_meta($note_id, '_andw_bound_post_id', $post_id);
-            
-            // Phase 2: 親投稿に新しいCPT IDを配列として追加（複数の作業メモに対応）
-            $existing_cpt_ids = get_post_meta($post_id, '_andw_bound_cpt_ids', true);
-            if (!is_array($existing_cpt_ids)) {
-                $existing_cpt_ids = [];
-            }
-            $existing_cpt_ids[] = $note_id;
-            update_post_meta($post_id, '_andw_bound_cpt_ids', $existing_cpt_ids);
-            
-            // 下位互換用：最新のCPT IDも単一フィールドに保存
-            update_post_meta($post_id, '_andw_bound_cpt_id', $note_id);
-            
-            if (defined('WP_DEBUG_LOG') && WP_DEBUG_LOG) {
-                andw_log('PHASE2] Parent post ' . $post_id . ' bound to CPT ' . $note_id . ' (total CPTs: ' . count($existing_cpt_ids) . ')');
-            }
-            
-            // 重複防止用ハッシュをCPT更新成功後に1回のみ更新
-            if (!is_wp_error($note_id) && $note_id) {
-                $hash_sync_result = update_post_meta($post_id, '_andw_last_sync_hash', $current_hash);
-                if (!$hash_sync_result && defined('WP_DEBUG_LOG') && WP_DEBUG_LOG) {
-                    andw_log(' hash-sync failed for post ' . $post_id);
-                }
-                
-                // 全体キャッシュクリア（一覧への即時反映担保）
-                wp_cache_delete('last_changed', 'posts');
-                
-                // 重複防止フラグを設定（1秒間有効・テスト用に短縮）
-                set_transient('andw_recent_create_' . $post_id, 1, 1);
-                
-                if (defined('WP_DEBUG_LOG') && WP_DEBUG_LOG) {
-                    andw_log(' hash synced successfully: ' . substr($current_hash, 0, 8));
-                }
-            }
-            
-            // 並び戦略をログ出力（案A採用を明記）
-            if (defined('WP_DEBUG_LOG') && WP_DEBUG_LOG && !get_transient('andw_strategy_logged')) {
-                andw_log(' orderby=date strategy=A (post_date updated to current time)');
-                set_transient('andw_strategy_logged', 1, HOUR_IN_SECONDS);
-            }
-        }
-    }
-    
-    /**
-     * 作業メモの内容を生成（Gutenbergサイドバーからの自動作成用）
-     */
-    private function generate_work_note_content($meta_payload, $post) {
-        $content_parts = [];
-        
-        /* translators: %1$s: post title */
-        $content_parts[] = sprintf(__('投稿「%1$s」の作業メモを右サイドバーから作成しました。', 'andw-work-notes'), esc_html(get_the_title($post)));
-        
-        if (!empty($meta_payload['requester'])) {
-            $content_parts[] = "依頼元: " . $meta_payload['requester'];
-        }
-        
-        if (!empty($meta_payload['worker'])) {
-            $content_parts[] = "担当者: " . $meta_payload['worker'];
-        }
-        
-        if (!empty($meta_payload['status'])) {
-            $content_parts[] = "ステータス: " . $meta_payload['status'];
-        }
-        
-        if (!empty($meta_payload['work_date'])) {
-            $content_parts[] = "実施日: " . $meta_payload['work_date'];
-        }
-        
-        return implode("\n\n", $content_parts);
-    }
+					andw_log( 'META_COMPARE] REST title: "' . $rest_work_title . '" vs DB title: "' . $db_work_title . '"' );
+					andw_log( 'META_COMPARE] REST content: "' . $rest_work_content . '" vs DB content: "' . $db_work_content . '"' );
+				}
+			}
 
-    public function admin_bar_quick_add($wp_admin_bar) {
-        if (!is_admin_bar_showing() || !current_user_can('edit_posts')) return;
+			// 既存CPTの確認: meta_queryで投稿IDに紐づく作業ノートを検索
+			// Plugin Check緩和: 推奨 INDEX(meta_key, meta_value) for _andw_bound_post_id
+			$args           = array(
+				'post_type'      => self::CPT,
+				'posts_per_page' => 1,
+				'meta_query'     => array( // phpcs:ignore WordPress.DB.SlowDBQuery.slow_db_query_meta_query -- 管理画面のフィルタ用途
+					array(
+						'key'     => '_andw_bound_post_id',
+						'value'   => $post_id,
+						'compare' => '=',
+						'type'    => 'CHAR',
+					),
+				),
+			);
+			$existing_ids   = andw_cached_ids_query( $args, 60 );
+			$existing_notes = ! empty( $existing_ids ) ? get_posts(
+				array(
+					'post__in'  => $existing_ids,
+					'post_type' => self::CPT,
+				)
+			) : array();
+			andw_log( 'SAVE_ANALYSIS] Existing CPT count for this post: ' . count( $existing_notes ) );
+			if ( ! empty( $existing_notes ) ) {
+				andw_log( 'SAVE_ANALYSIS] Existing CPT ID: ' . $existing_notes[0]->ID . ', Title: "' . $existing_notes[0]->post_title . '"' );
+			}
+		}
 
-        $screen = function_exists('get_current_screen') ? get_current_screen() : null;
-        $args = [
-            'id' => 'andw_quick_add',
-            'title' => '＋作業メモ',
-            'href' => admin_url('post-new.php?post_type=' . self::CPT),
-            'meta' => ['title'=>'作業メモを追加']
-        ];
+		// コンテンツ判定の緩和：作業タイトル・作業内容いずれかがあればCPT作成を実行
+		$has_work_fields  = ! empty( $work_title_check ) || ! empty( $work_content_check );
+		$has_other_fields = ! empty( $target_type ) || ! empty( $target_id ) || ! empty( $target_label ) ||
+							! empty( $requester ) || ! empty( $worker ) || ! empty( $status ) || ! empty( $work_date );
+		$has_content      = $has_work_fields || $has_other_fields;
+
+		// デバッグログ強化：各フィールドの状態を詳細出力
+		if ( defined( 'WP_DEBUG_LOG' ) && WP_DEBUG_LOG ) {
+			$fields_status = array(
+				'work_title'   => ! empty( $work_title_check ) ? 'set' : 'empty',
+				'work_content' => ! empty( $work_content_check ) ? 'set' : 'empty',
+				'target_type'  => ! empty( $target_type ) ? 'set' : 'empty',
+				'target_id'    => ! empty( $target_id ) ? 'set' : 'empty',
+				'target_label' => ! empty( $target_label ) ? 'set' : 'empty',
+				'requester'    => ! empty( $requester ) ? 'set' : 'empty',
+				'worker'       => ! empty( $worker ) ? 'set' : 'empty',
+				'status'       => ! empty( $status ) ? 'set' : 'empty',
+				'work_date'    => ! empty( $work_date ) ? 'set' : 'empty',
+			);
+			andw_log( 'CONTENT_CHECK] Fields status: ' . wp_json_encode( $fields_status ) );
+			andw_log( 'CONTENT_CHECK] has_work_fields=' . ( $has_work_fields ? 'true' : 'false' ) . ' has_other_fields=' . ( $has_other_fields ? 'true' : 'false' ) . ' final_decision=' . ( $has_content ? 'proceed' : 'skip' ) );
+		}
+
+		// コンソール出力（ブラウザ開発者ツールで確認可能）
+		if ( ! $has_content ) {
+			$console_msg  = 'ANDW: No content detected - all fields empty';
+			$fields_debug = 'work_title=' . ( $work_title_check ?: 'empty' ) . ', work_content=' . ( $work_content_check ?: 'empty' );
+
+			// デバッグログ出力（直書きスクリプトを削除し、ログ出力に変更）
+			if ( defined( 'WP_DEBUG' ) && WP_DEBUG && current_user_can( 'manage_options' ) ) {
+				andw_log( $console_msg . ' | ' . $fields_debug );
+			}
+
+			if ( defined( 'WP_DEBUG_LOG' ) && WP_DEBUG_LOG ) {
+				andw_log( 'SAVE_ANALYSIS] SKIP: No content detected - work_title="' . $work_title_check . '" work_content="' . $work_content_check . '" other_fields_empty=true' );
+			}
+			return;
+		} else {
+			// 処理続行の場合もログ出力
+			if ( defined( 'WP_DEBUG_LOG' ) && WP_DEBUG_LOG ) {
+				$reason = $has_work_fields ? 'work_fields_present' : 'other_fields_present';
+				andw_log( 'SAVE_ANALYSIS] PROCEED: Content detected, reason=' . $reason );
+			}
+		}
+
+		// 段階2: REST APIリクエスト時のメタ準備完了検証（緩和版）
+		if ( defined( 'REST_REQUEST' ) && REST_REQUEST ) {
+			// 作業フィールドの状態をチェック
+			$work_title_empty       = empty( $work_title_check );
+			$work_content_empty     = empty( $work_content_check );
+			$both_work_fields_empty = $work_title_empty && $work_content_empty;
+
+			if ( defined( 'WP_DEBUG_LOG' ) && WP_DEBUG_LOG ) {
+				andw_log( 'REST_CHECK] work_title_empty=' . ( $work_title_empty ? 'true' : 'false' ) . ' work_content_empty=' . ( $work_content_empty ? 'true' : 'false' ) );
+			}
+
+			// 作業フィールドが両方空で、かつ他のメタフィールドも空の場合のみ保留
+			if ( $both_work_fields_empty ) {
+				$other_meta_empty = empty( $requester ) && empty( $worker ) && empty( $status ) && empty( $target_label );
+
+				if ( $other_meta_empty ) {
+					if ( defined( 'WP_DEBUG_LOG' ) && WP_DEBUG_LOG ) {
+						andw_log( 'SAVE_ANALYSIS] SKIP: REST request with all meta empty, flagging for retry on post ' . $post_id );
+					}
+
+					// デバッグログ出力（直書きスクリプトを削除し、ログ出力に変更）
+					if ( defined( 'WP_DEBUG' ) && WP_DEBUG && current_user_can( 'manage_options' ) ) {
+						andw_log( 'REST request with all meta empty, retry flagged for post ' . $post_id );
+					}
+
+					// 次回save_postで再処理するためのフラグを設定
+					update_post_meta( $post_id, '_andw_pending_cpt_creation', 1 );
+					return;
+				}
+			} else {
+				// 作業フィールドのいずれかがある場合は即座に処理
+				delete_post_meta( $post_id, '_andw_pending_cpt_creation' );
+				if ( defined( 'WP_DEBUG_LOG' ) && WP_DEBUG_LOG ) {
+					andw_log( 'SAVE_ANALYSIS] REST work fields present, proceeding immediately' );
+				}
+			}
+		}
+
+		// フラグがある場合の再処理ロジック
+		$pending_flag = get_post_meta( $post_id, '_andw_pending_cpt_creation', true );
+		if ( $pending_flag ) {
+			if ( defined( 'WP_DEBUG_LOG' ) && WP_DEBUG_LOG ) {
+				andw_log( 'SAVE_ANALYSIS] Processing delayed CPT creation for post ' . $post_id );
+			}
+
+			// デバッグログ出力（直書きスクリプトを削除し、ログ出力に変更）
+			if ( defined( 'WP_DEBUG' ) && WP_DEBUG && current_user_can( 'manage_options' ) ) {
+				andw_log( 'Processing delayed CPT creation for post ' . $post_id );
+			}
+
+			delete_post_meta( $post_id, '_andw_pending_cpt_creation' );
+		}
+
+		// 重複防止のためのハッシュ生成（取得済みの最新値を使用）
+		$work_title   = $work_title_check;
+		$work_content = $work_content_check;
+
+		$meta_payload = array(
+			'target_type'  => $target_type,
+			'target_id'    => $target_id,
+			'target_label' => $target_label,
+			'requester'    => $requester,
+			'worker'       => $worker,
+			'status'       => $status,
+			'work_date'    => $work_date,
+			'work_title'   => $work_title,
+			'work_content' => $work_content,
+		);
+		$current_hash = md5( wp_json_encode( $meta_payload ) );
+		$last_hash    = get_post_meta( $post_id, '_andw_last_sync_hash', true );
+
+		// ハッシュによる重複防止チェック（簡素化）
+		$hash_result = ( $current_hash === $last_hash ) ? 'same' : 'diff';
+		if ( defined( 'WP_DEBUG_LOG' ) && WP_DEBUG_LOG ) {
+			andw_log( ' hash current=' . substr( $current_hash, 0, 8 ) . ' last=' . substr( $last_hash ?: 'none', 0, 8 ) . ' result=' . $hash_result );
+		}
+
+		// ハッシュが同じなら重複作成を防止してスキップ
+		if ( $current_hash === $last_hash ) {
+			if ( defined( 'WP_DEBUG_LOG' ) && WP_DEBUG_LOG ) {
+				andw_log( 'SAVE_POST] SKIP: Hash unchanged - preventing duplicate creation' );
+			}
+			return;
+		}
+
+		// wp_after_insert_postとの重複を防ぐため、一定時間内の作成をスキップ
+		$recent_create_flag = get_transient( 'andw_recent_create_' . $post_id );
+		if ( $recent_create_flag ) {
+			if ( defined( 'WP_DEBUG_LOG' ) && WP_DEBUG_LOG ) {
+				andw_log( 'SAVE_POST] SKIP: Recent creation detected, avoiding duplicate' );
+			}
+			return;
+		}
+
+		if ( defined( 'WP_DEBUG_LOG' ) && WP_DEBUG_LOG ) {
+			andw_log( 'SAVE_POST] Proceeding with CPT creation: hash changed' );
+		}
+
+		// 作業メモCPT作成または更新処理
+		$user_work_title   = $work_title ?: $target_label ?: '';
+		$user_work_content = $work_content ?: '';
+
+		// 実値がある場合は使用、なければフォールバック
+		if ( ! empty( $user_work_title ) ) {
+			$note_title = sanitize_text_field( $user_work_title );
+			if ( defined( 'WP_DEBUG_LOG' ) && WP_DEBUG_LOG ) {
+				andw_log( 'SAVE_ANALYSIS] Using user work_title as post_title: ' . $note_title );
+			}
+		} else {
+			$note_title = '作業メモ ' . current_time( 'Y-m-d H:i' );
+			if ( defined( 'WP_DEBUG_LOG' ) && WP_DEBUG_LOG ) {
+				andw_log( 'SAVE_ANALYSIS] No work_title found, using fallback: ' . $note_title );
+			}
+		}
+
+		if ( ! empty( $user_work_content ) ) {
+			$note_content = wp_kses_post( $user_work_content );
+			if ( defined( 'WP_DEBUG_LOG' ) && WP_DEBUG_LOG ) {
+				andw_log( 'SAVE_ANALYSIS] Using user work_content as post_content' );
+			}
+		} else {
+			$note_content = $this->generate_work_note_content( $meta_payload, $post );
+			if ( defined( 'WP_DEBUG_LOG' ) && WP_DEBUG_LOG ) {
+				andw_log( 'SAVE_ANALYSIS] No work_content found, using generated content' );
+			}
+		}
+
+		// 常に新規CPTを作成（上書きしない）
+		$note_id = wp_insert_post(
+			array(
+				'post_type'     => self::CPT,
+				'post_status'   => 'publish',
+				'post_title'    => $note_title,
+				'post_content'  => $note_content,
+				'post_author'   => get_current_user_id(),
+				'post_date'     => current_time( 'mysql' ),
+				'post_date_gmt' => gmdate( 'Y-m-d H:i:s' ),
+			),
+			true
+		);
+
+		// 新規作成後の確実なキャッシュクリア
+		if ( ! is_wp_error( $note_id ) && $note_id ) {
+			clean_post_cache( $note_id );
+			clean_post_cache( $post_id );
+
+			if ( defined( 'WP_DEBUG_LOG' ) && WP_DEBUG_LOG ) {
+				andw_log( 'ALWAYS_CREATE] New CPT created successfully: id=' . $note_id . ' title="' . $note_title . '"' );
+			}
+		}
+
+		if ( ! is_wp_error( $note_id ) && $note_id ) {
+			if ( defined( 'WP_DEBUG_LOG' ) && WP_DEBUG_LOG ) {
+				andw_log( 'SAVE_ANALYSIS] === CPT作成成功 === ID: ' . $note_id . ', Title: "' . $note_title . '"' );
+			}
+
+			// 作業メモCPTにメタデータを設定
+			update_post_meta( $note_id, '_andw_target_type', $target_type ?: 'post' );
+			update_post_meta( $note_id, '_andw_target_id', (string) $post_id );
+			// update_post_meta($note_id, '_andw_target_label', $target_label ?: get_the_title($post_id)); // 廃止：作業タイトルに統合
+			update_post_meta( $note_id, '_andw_requester', $requester );
+			update_post_meta( $note_id, '_andw_worker', $worker );
+			update_post_meta( $note_id, '_andw_status', $status ?: '依頼' );
+			update_post_meta( $note_id, '_andw_work_date', $work_date ?: current_time( 'Y-m-d' ) );
+
+			// 旧処理：CPTへのメタフィールド転送は不要（post_title/post_contentに直接保存済み）
+			if ( defined( 'WP_DEBUG_LOG' ) && WP_DEBUG_LOG ) {
+				andw_log( 'SAVE_ANALYSIS] CPT created with direct post_title/post_content - no meta transfer needed' );
+			}
+
+			// 正規リンク用メタフィールドを設定
+			update_post_meta( $note_id, '_andw_bound_post_id', $post_id );
+
+			// Phase 2: 親投稿に新しいCPT IDを配列として追加（複数の作業メモに対応）
+			$existing_cpt_ids = get_post_meta( $post_id, '_andw_bound_cpt_ids', true );
+			if ( ! is_array( $existing_cpt_ids ) ) {
+				$existing_cpt_ids = array();
+			}
+			$existing_cpt_ids[] = $note_id;
+			update_post_meta( $post_id, '_andw_bound_cpt_ids', $existing_cpt_ids );
+
+			// 下位互換用：最新のCPT IDも単一フィールドに保存
+			update_post_meta( $post_id, '_andw_bound_cpt_id', $note_id );
+
+			if ( defined( 'WP_DEBUG_LOG' ) && WP_DEBUG_LOG ) {
+				andw_log( 'PHASE2] Parent post ' . $post_id . ' bound to CPT ' . $note_id . ' (total CPTs: ' . count( $existing_cpt_ids ) . ')' );
+			}
+
+			// 重複防止用ハッシュをCPT更新成功後に1回のみ更新
+			if ( ! is_wp_error( $note_id ) && $note_id ) {
+				$hash_sync_result = update_post_meta( $post_id, '_andw_last_sync_hash', $current_hash );
+				if ( ! $hash_sync_result && defined( 'WP_DEBUG_LOG' ) && WP_DEBUG_LOG ) {
+					andw_log( ' hash-sync failed for post ' . $post_id );
+				}
+
+				// 全体キャッシュクリア（一覧への即時反映担保）
+				wp_cache_delete( 'last_changed', 'posts' );
+
+				// 重複防止フラグを設定（1秒間有効・テスト用に短縮）
+				set_transient( 'andw_recent_create_' . $post_id, 1, 1 );
+
+				if ( defined( 'WP_DEBUG_LOG' ) && WP_DEBUG_LOG ) {
+					andw_log( ' hash synced successfully: ' . substr( $current_hash, 0, 8 ) );
+				}
+			}
+
+			// 並び戦略をログ出力（案A採用を明記）
+			if ( defined( 'WP_DEBUG_LOG' ) && WP_DEBUG_LOG && ! get_transient( 'andw_strategy_logged' ) ) {
+				andw_log( ' orderby=date strategy=A (post_date updated to current time)' );
+				set_transient( 'andw_strategy_logged', 1, HOUR_IN_SECONDS );
+			}
+		}
+	}
+
+	/**
+	 * 作業メモの内容を生成（Gutenbergサイドバーからの自動作成用）
+	 */
+	private function generate_work_note_content( $meta_payload, $post ) {
+		$content_parts = array();
+
+		/* translators: %1$s: post title */
+		$content_parts[] = sprintf( __( '投稿「%1$s」の作業メモを右サイドバーから作成しました。', 'andw-work-notes' ), esc_html( get_the_title( $post ) ) );
+
+		if ( ! empty( $meta_payload['requester'] ) ) {
+			$content_parts[] = '依頼元: ' . $meta_payload['requester'];
+		}
+
+		if ( ! empty( $meta_payload['worker'] ) ) {
+			$content_parts[] = '担当者: ' . $meta_payload['worker'];
+		}
+
+		if ( ! empty( $meta_payload['status'] ) ) {
+			$content_parts[] = 'ステータス: ' . $meta_payload['status'];
+		}
+
+		if ( ! empty( $meta_payload['work_date'] ) ) {
+			$content_parts[] = '実施日: ' . $meta_payload['work_date'];
+		}
+
+		return implode( "\n\n", $content_parts );
+	}
+
+	public function admin_bar_quick_add( $wp_admin_bar ) {
+		if ( ! is_admin_bar_showing() || ! current_user_can( 'edit_posts' ) ) {
+			return;
+		}
+
+		$screen = function_exists( 'get_current_screen' ) ? get_current_screen() : null;
+		$args   = array(
+			'id'    => 'andw_quick_add',
+			'title' => '＋作業メモ',
+			'href'  => admin_url( 'post-new.php?post_type=' . self::CPT ),
+			'meta'  => array( 'title' => '作業メモを追加' ),
+		);
 
         // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- GET閲覧のみでPOST処理なし
-        if ($screen && $screen->base === 'post' && isset($_GET['post'])) {
+		if ( $screen && $screen->base === 'post' && isset( $_GET['post'] ) ) {
             // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- GET閲覧のみでPOST処理なし
-            $pid = (int)$_GET['post'];
-            $args['href'] = admin_url('post-new.php?post_type=' . self::CPT . '&andw_target=post:' . $pid);
-        }
-        $wp_admin_bar->add_node($args);
-    }
+			$pid          = (int) $_GET['post'];
+			$args['href'] = admin_url( 'post-new.php?post_type=' . self::CPT . '&andw_target=post:' . $pid );
+		}
+		$wp_admin_bar->add_node( $args );
+	}
 
-    public function maybe_prefill_target_meta($screen) {
+	public function maybe_prefill_target_meta( $screen ) {
         // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- GET閲覧のみでPOST処理なし
-        if ($screen && $screen->id === self::CPT && $screen->base === 'post' && isset($_GET['andw_target'])) {
-            add_filter('default_title', function($title){ return '作業メモ ' . current_time('Y-m-d H:i'); });
-            add_action('save_post_' . self::CPT, function($post_id){
+		if ( $screen && $screen->id === self::CPT && $screen->base === 'post' && isset( $_GET['andw_target'] ) ) {
+			add_filter(
+				'default_title',
+				function ( $title ) {
+					return '作業メモ ' . current_time( 'Y-m-d H:i' );
+				}
+			);
+			add_action(
+				'save_post_' . self::CPT,
+				function ( $post_id ) {
                 // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- save_post内でのGET参照
-                if (!isset($_GET['andw_target'])) return;
+					if ( ! isset( $_GET['andw_target'] ) ) {
+						return;
+					}
                 // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- save_post内でのGET参照
-                $raw = isset($_GET['andw_target']) ? sanitize_text_field(wp_unslash($_GET['andw_target'])) : '';
-                if (strpos($raw, 'post:') === 0) {
-                    $pid = (int)substr($raw, 5);
-                    update_post_meta($post_id, '_andw_target_type', 'post');
-                    update_post_meta($post_id, '_andw_target_id', (string)$pid);
-                    // update_post_meta($post_id, '_andw_target_label', get_the_title($pid)); // 廃止：作業タイトルに統合
-                    
-                    // 正規リンク用メタフィールドを自動付与
-                    update_post_meta($post_id, '_andw_bound_post_id', $pid);
-                }
-            }, 10, 1);
-        }
-    }
+					$raw = isset( $_GET['andw_target'] ) ? sanitize_text_field( wp_unslash( $_GET['andw_target'] ) ) : '';
+					if ( strpos( $raw, 'post:' ) === 0 ) {
+						$pid = (int) substr( $raw, 5 );
+						update_post_meta( $post_id, '_andw_target_type', 'post' );
+						update_post_meta( $post_id, '_andw_target_id', (string) $pid );
+						// update_post_meta($post_id, '_andw_target_label', get_the_title($pid)); // 廃止：作業タイトルに統合
 
-    /* ===== 作業一覧（WP_List_Table） ===== */
+						// 正規リンク用メタフィールドを自動付与
+						update_post_meta( $post_id, '_andw_bound_post_id', $pid );
+					}
+				},
+				10,
+				1
+			);
+		}
+	}
 
-    public function add_list_page() {
-        add_submenu_page(
-            'edit.php?post_type=' . self::CPT,
-            __('作業一覧', 'andw-work-notes'),
-            __('作業一覧', 'andw-work-notes'),
-            'edit_posts',
-            'andw-list',
-            [$this, 'render_list_page']
-        );
-    }
+	/* ===== 作業一覧（WP_List_Table） ===== */
 
-    public function render_list_page() {
-        if (!current_user_can('edit_posts')) return;
+	public function add_list_page() {
+		add_submenu_page(
+			'edit.php?post_type=' . self::CPT,
+			__( '作業一覧', 'andw-work-notes' ),
+			__( '作業一覧', 'andw-work-notes' ),
+			'edit_posts',
+			'andw-list',
+			array( $this, 'render_list_page' )
+		);
+	}
 
-        if (!class_exists('WP_List_Table')) {
-            require_once ABSPATH . 'wp-admin/includes/class-wp-list-table.php';
-        }
+	public function render_list_page() {
+		if ( ! current_user_can( 'edit_posts' ) ) {
+			return;
+		}
 
-        $table = new ANDW_List_Table([
-            'requesters' => get_option(self::OPT_REQUESTERS, []),
-            'workers'    => get_option(self::OPT_WORKERS, $this->default_workers())
-        ]);
-        $table->prepare_items();
+		// WordPress.org 審査対応: 独自WP_List_Tableを削除し、標準CPT一覧にリダイレクト
+		$redirect_url = admin_url( 'edit.php?post_type=' . self::CPT );
+		wp_safe_redirect( $redirect_url );
+		exit;
+	}
 
-        echo '<div class="wrap"><h1 class="wp-heading-inline">' . esc_html__('作業一覧', 'andw-work-notes') . '</h1>';
-        echo '<form method="get">';
-        echo '<input type="hidden" name="post_type" value="'.esc_attr(self::CPT).'">';
-        echo '<input type="hidden" name="page" value="andw-list">';
-        $table->search_box(__('キーワード検索', 'andw-work-notes'), 'andw-search');
-        $table->views();
-        $table->display();
-        echo '</form></div>';
-    }
-    
-    /**
-     * Gutenberg サイドバー用アセットを読み込み
-     */
-    public function enqueue_gutenberg_sidebar_assets() {
-        // 投稿と固定ページの編集画面のみで読み込み
-        $target_post_types = ['post', 'page'];
-        $screen = get_current_screen();
-        if (!$screen || !in_array($screen->post_type, $target_post_types)) {
-            return;
-        }
-        
-        // Gutenberg エディタでない場合はスキップ
-        if (!$this->is_gutenberg_editor()) {
-            return;
-        }
-        
-        // Gutenberg環境での念のためのメタボックス削除（保険処理）
-        foreach ($target_post_types as $post_type) {
-            remove_meta_box('andw_parent', $post_type, 'normal');
-        }
-        
-        wp_enqueue_script(
-            'andw-gutenberg-sidebar',
-            ANDW_URL . 'assets/js/gutenberg-sidebar.js',
-            [
-                'wp-plugins',     // registerPlugin
-                'wp-edit-post',   // PluginPostStatusInfo
-                'wp-element',     // createElement, Fragment, useState
-                'wp-components',  // TextControl, SelectControl, PanelRow, Button
-                'wp-data',        // useSelect, useDispatch
-                'wp-core-data',   // useEntityProp
-                'wp-i18n'         // __
-            ],
-            filemtime(ANDW_DIR . 'assets/js/gutenberg-sidebar.js'),
-            true
-        );
-        
-        // Gutenbergサイドバー専用CSS
-        wp_enqueue_style(
-            'andw-gutenberg-sidebar-css',
-            ANDW_URL . 'assets/css/gutenberg-sidebar.css',
-            [],
-            filemtime(ANDW_DIR . 'assets/css/gutenberg-sidebar.css')
-        );
-        
-        // 依頼元・担当者のオプションを取得してJavaScriptに渡す
-        $requesters = $this->normalize_option_data('andw_requesters', []);
-        $workers = $this->normalize_option_data('andw_workers', $this->default_workers());
-        
-        // 現在の投稿IDを取得
-        $current_post_id = 0;
+	/**
+	 * Gutenberg サイドバー用アセットを読み込み
+	 */
+	public function enqueue_gutenberg_sidebar_assets() {
+		// 投稿と固定ページの編集画面のみで読み込み
+		$target_post_types = array( 'post', 'page' );
+		$screen            = get_current_screen();
+		if ( ! $screen || ! in_array( $screen->post_type, $target_post_types ) ) {
+			return;
+		}
+
+		// Gutenberg エディタでない場合はスキップ
+		if ( ! $this->is_gutenberg_editor() ) {
+			return;
+		}
+
+		// Gutenberg環境での念のためのメタボックス削除（保険処理）
+		foreach ( $target_post_types as $post_type ) {
+			remove_meta_box( 'andw_parent', $post_type, 'normal' );
+		}
+
+		wp_enqueue_script(
+			'andw-gutenberg-sidebar',
+			ANDW_URL . 'assets/js/gutenberg-sidebar.js',
+			array(
+				'wp-plugins',     // registerPlugin
+				'wp-edit-post',   // PluginPostStatusInfo
+				'wp-element',     // createElement, Fragment, useState
+				'wp-components',  // TextControl, SelectControl, PanelRow, Button
+				'wp-data',        // useSelect, useDispatch
+				'wp-core-data',   // useEntityProp
+				'wp-i18n',         // __
+			),
+			filemtime( ANDW_DIR . 'assets/js/gutenberg-sidebar.js' ),
+			true
+		);
+
+		// Gutenbergサイドバー専用CSS
+		wp_enqueue_style(
+			'andw-gutenberg-sidebar-css',
+			ANDW_URL . 'assets/css/gutenberg-sidebar.css',
+			array(),
+			filemtime( ANDW_DIR . 'assets/css/gutenberg-sidebar.css' )
+		);
+
+		// 依頼元・担当者のオプションを取得してJavaScriptに渡す
+		$requesters = $this->normalize_option_data( 'andw_requesters', array() );
+		$workers    = $this->normalize_option_data( 'andw_workers', $this->default_workers() );
+
+		// 現在の投稿IDを取得
+		$current_post_id = 0;
         // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- GET閲覧のみでPOST処理なし
-        if (isset($_GET['post'])) {
-            $current_post_id = absint(wp_unslash($_GET['post']));
-        } elseif (isset($_POST['post_ID'])) {
-            // nonce検証を明示的に実行
-            if (isset($_POST[self::NONCE]) && wp_verify_nonce(sanitize_text_field(wp_unslash($_POST[self::NONCE])), self::NONCE)) {
-                $current_post_id = absint(wp_unslash($_POST['post_ID']));
-            }
-        }
-        
-        // 初期値用の最新作業メモを取得
-        $prefill_data = null;
-        if ($current_post_id) {
-            $latest_note = $this->get_latest_work_note_for_prefill($current_post_id);
-            if ($latest_note) {
-                $prefill_data = [
-                    'target_type' => $latest_note['target_type'] ?: 'post',
-                    'target_id' => (string)$current_post_id, // 現在の投稿IDを設定
-                    'requester' => $latest_note['requester'],
-                    'worker' => $latest_note['worker'],
-                    'needs_backfill' => $latest_note['needs_backfill'],
-                    'note_id' => $latest_note['note_id'],
-                    'current_post_id' => $current_post_id
-                ];
-            }
-        }
-        
-        wp_localize_script('andw-gutenberg-sidebar', 'andwGutenbergData', [
-            'requesters' => $requesters,
-            'workers' => $workers,
-            'ajax_url' => admin_url('admin-ajax.php'),
-            'nonce' => wp_create_nonce('andw_sidebar_nonce')
-        ]);
-        
-        // AJAX作業メモ作成用のnonce（別の変数として設定）
-        wp_localize_script('andw-gutenberg-sidebar', 'andwAjax', [
-            'nonce' => wp_create_nonce('andw_create_work_note'),
-            'ajax_url' => admin_url('admin-ajax.php')
-        ]);
-        
-        // 初期値データを別の変数として渡す
-        wp_localize_script('andw-gutenberg-sidebar', 'andwPrefill', $prefill_data ?: []);
-    }
-    
-    /**
-     * Gutenberg エディタかどうかを判定
-     */
-    private function is_gutenberg_editor() {
-        // WordPress 5.0+ のブロックエディタチェック
-        if (function_exists('use_block_editor_for_post')) {
-            global $post;
-            return $post && use_block_editor_for_post($post);
-        }
-        
-        // 旧バージョン対応
-        if (function_exists('is_gutenberg_page')) {
-            return is_gutenberg_page();
-        }
-        
-        return false;
-    }
-    
-    /**
-     * 指定投稿に紐づく最新の作業メモを取得（初期値流し込み用）
-     * 正規リンク→フォールバック→lazy backfillの順で実行
-     */
-    private function get_latest_work_note_for_prefill($post_id) {
-        $post_id = (int)$post_id;
-        if (!$post_id) return null;
-        
-        // 1. 正規リンクで検索（_andw_bound_post_id）: meta_queryで投稿に関連する作業ノート取得
-        // Plugin Check緩和: 推奨 INDEX(meta_key, meta_value) for _andw_bound_post_id
-        $query_args = [
-            'post_type' => self::CPT,
-            'posts_per_page' => 1,
-            'post_status' => 'publish',
-            'meta_query' => [ // phpcs:ignore WordPress.DB.SlowDBQuery.slow_db_query_meta_query -- 管理画面のフィルタ用途
-                ['key' => '_andw_bound_post_id', 'value' => $post_id, 'type' => 'NUMERIC', 'compare' => '=']
-            ],
-            'orderby' => [
-                'meta_value' => 'DESC',         // phpcs:ignore WordPress.DB.SlowDBQuery.slow_db_query_meta_value -- 絞り込みに必要 実施日優先
-                'post_modified_gmt' => 'DESC', // 次点で更新日時
-                'post_date' => 'DESC'          // 最後に作成日時
-            ],
-            'meta_key' => '_andw_work_date',    // phpcs:ignore WordPress.DB.SlowDBQuery.slow_db_query_meta_key -- 並び替えに必要
-            'meta_type' => 'CHAR' // Y-m-d 形式の日付文字列を正しくソート
-        ];
-        
-        $ids = andw_cached_ids_query($query_args, 60);
-        $query_posts = !empty($ids) ? get_posts(['post__in' => $ids, 'orderby' => 'post__in', 'post_type' => self::CPT]) : [];
-        
-        // WP_Query形式のオブジェクトとして結果を包装
-        $query = new stdClass();
-        $query->posts = $query_posts;
-        
-        // 2. 正規リンクでヒットしない場合、フォールバック検索: Plugin Check緩和
-        if (empty($query->posts)) {
-            // Plugin Check緩和: meta_queryで未リンク作業ノートを検索（推奨INDEX追加）
-            $query_args['meta_query'] = [ // phpcs:ignore WordPress.DB.SlowDBQuery.slow_db_query_meta_query -- 管理画面のフィルタ用途
-                'relation' => 'AND',
-                ['key' => '_andw_target_type', 'value' => ['post', 'page'], 'compare' => 'IN', 'type' => 'CHAR'],
-                ['key' => '_andw_target_id', 'value' => (string)$post_id, 'compare' => '=', 'type' => 'CHAR'],
-            ];
-            
-            $fallback_ids = andw_cached_ids_query($query_args, 60);
-            $query->posts = !empty($fallback_ids) ? get_posts(['post__in' => $fallback_ids, 'orderby' => 'post__in', 'post_type' => self::CPT]) : [];
-        }
-        
-        if (empty($query->posts)) {
-            return null;
-        }
-        
-        $latest_note = $query->posts[0];
-        
-        // フォールバック経由で取得した場合、lazy backfill用の情報を返す
-        $needs_backfill = !get_post_meta($latest_note->ID, '_andw_bound_post_id', true);
-        
-        return [
-            'note_id' => $latest_note->ID,
-            'target_type' => get_post_meta($latest_note->ID, '_andw_target_type', true),
-            'target_id' => get_post_meta($latest_note->ID, '_andw_target_id', true),
-            'requester' => get_post_meta($latest_note->ID, '_andw_requester', true),
-            'worker' => get_post_meta($latest_note->ID, '_andw_worker', true),
-            'needs_backfill' => $needs_backfill,
-            'current_post_id' => $post_id
-        ];
-    }
+		if ( isset( $_GET['post'] ) ) {
+			$current_post_id = absint( wp_unslash( $_GET['post'] ) );
+		} elseif ( isset( $_POST['post_ID'] ) ) {
+			// nonce検証を明示的に実行
+			if ( isset( $_POST[ self::NONCE ] ) && wp_verify_nonce( sanitize_text_field( wp_unslash( $_POST[ self::NONCE ] ) ), self::NONCE ) ) {
+				$current_post_id = absint( wp_unslash( $_POST['post_ID'] ) );
+			}
+		}
 
-    /**
-     * サイドバーデータ取得用AJAX
-     */
-    public function ajax_get_sidebar_data() {
-        $nonce = isset($_POST['nonce']) ? sanitize_text_field(wp_unslash($_POST['nonce'])) : '';
-        if (!wp_verify_nonce($nonce, 'andw_sidebar_nonce')) {
-            wp_send_json_error(['message' => __('セキュリティチェックに失敗しました。', 'andw-work-notes')]);
-        }
-        
-        if (!current_user_can('edit_posts')) {
-            wp_send_json_error(['message' => __('この操作を実行する権限がありません。', 'andw-work-notes')]);
-        }
-        
-        $data = [
-            'requesters' => $this->normalize_option_data('andw_requesters', []),
-            'workers' => $this->normalize_option_data('andw_workers', $this->default_workers())
-        ];
-        
-        wp_send_json_success($data);
-    }
-    
-    
-    
-    
-    /**
-     * タイミング調査用: 早期段階でのメタデータ確認
-     */
-    public function debug_save_timing_early($post_id, $post) {
-        if (!defined('WP_DEBUG_LOG') || !WP_DEBUG_LOG) return;
-        if (!in_array($post->post_type, ['post', 'page'])) return;
-        
-        $work_title = get_post_meta($post_id, '_andw_work_title', true);
-        $work_content = get_post_meta($post_id, '_andw_work_content', true);
-        $current_action = current_action();
-        $is_rest = defined('REST_REQUEST') && REST_REQUEST ? 'true' : 'false';
-        
-        andw_log('TIMING EARLY] Hook: ' . $current_action . ', Post: ' . $post_id . ', REST: ' . $is_rest . ', Title: "' . $work_title . '", Content: "' . $work_content . '"');
-    }
-    
-    /**
-     * タイミング調査用: 遅期段階でのメタデータ確認
-     */
-    public function debug_save_timing_late($post_id, $post) {
-        if (!defined('WP_DEBUG_LOG') || !WP_DEBUG_LOG) return;
-        if (!in_array($post->post_type, ['post', 'page'])) return;
-        
-        $work_title = get_post_meta($post_id, '_andw_work_title', true);
-        $work_content = get_post_meta($post_id, '_andw_work_content', true);
-        $current_action = current_action();
-        
-        // 作成されたCPTの確認: meta_queryでデバッグ用作業ノート取得
-        // Plugin Check緩和: 推奨 INDEX(meta_key, meta_value) for _andw_bound_post_id
-        $args = [
-            'post_type' => self::CPT,
-            'posts_per_page' => 1,
-            'meta_query' => [ // phpcs:ignore WordPress.DB.SlowDBQuery.slow_db_query_meta_query -- 管理画面のフィルタ用途
-                [
-                    'key' => '_andw_bound_post_id',
-                    'value' => $post_id,
-                    'compare' => '=',
-                    'type' => 'CHAR'
-                ]
-            ]
-        ];
-        $created_ids = andw_cached_ids_query($args, 60);
-        $created_notes = !empty($created_ids) ? get_posts(['post__in' => $created_ids, 'post_type' => self::CPT]) : [];
-        
-        $cpt_count = count($created_notes);
-        $cpt_info = '';
-        if ($cpt_count > 0) {
-            $note = $created_notes[0];
-            $cpt_title = get_post_meta($note->ID, '_andw_work_title', true);
-            $cpt_content = get_post_meta($note->ID, '_andw_work_content', true);
-            $cpt_info = ' CPT_ID: ' . $note->ID . ', CPT_Title: "' . $cpt_title . '", CPT_Content: "' . $cpt_content . '"';
-        }
-        
-        andw_log('TIMING LATE] Hook: ' . $current_action . ', Post: ' . $post_id . ', Title: "' . $work_title . '", Content: "' . $work_content . '", CPT_Count: ' . $cpt_count . $cpt_info);
-    }
-    
-    /**
-     * wp_after_insert_post調査用: 投稿挿入完了後のメタデータ確認
-     */
-    public function debug_after_insert_post($post_id, $post, $update, $post_before) {
-        if (!defined('WP_DEBUG_LOG') || !WP_DEBUG_LOG) return;
-        if (!in_array($post->post_type, ['post', 'page'])) return;
-        
-        $work_title = get_post_meta($post_id, '_andw_work_title', true);
-        $work_content = get_post_meta($post_id, '_andw_work_content', true);
-        $requester = get_post_meta($post_id, '_andw_requester', true);
-        $worker = get_post_meta($post_id, '_andw_worker', true);
-        $status = get_post_meta($post_id, '_andw_status', true);
-        $work_date = get_post_meta($post_id, '_andw_work_date', true);
-        $target_label = get_post_meta($post_id, '_andw_target_label', true);
-        
-        $is_rest = defined('REST_REQUEST') && REST_REQUEST ? 'true' : 'false';
-        $update_status = $update ? 'update' : 'new';
-        
-        andw_log('[wp_after_insert] Post: ' . $post_id . ', Type: ' . $post->post_type . ', Update: ' . $update_status . ', REST: ' . $is_rest);
-        andw_log('[wp_after_insert] work_title="' . $work_title . '" work_content="' . $work_content . '" requester="' . $requester . '" worker="' . $worker . '" status="' . $status . '" work_date="' . $work_date . '" target_label="' . $target_label . '"');
-    }
-    
-    /**
-     * wp_after_insert_postでのバックアップCPT作成
-     * save_postで作成できなかった場合の保険処理
-     */
-    public function fallback_create_work_note_from_meta($post_id, $post, $update, $post_before) {
-        // ガード条件
-        if (!in_array($post->post_type, ['post', 'page'])) return;
-        if (wp_is_post_revision($post_id)) return;
-        if (wp_is_post_autosave($post_id)) return;
-        if (!current_user_can('edit_post', $post_id)) return;
-        
-        // 既にCPTが作成されているかチェック: meta_queryで重複作成防止
-        // Plugin Check緩和: 推奨 INDEX(meta_key, meta_value) for _andw_bound_post_id
-        $args = [
-            'post_type' => self::CPT,
-            'posts_per_page' => 1,
-            'meta_query' => [ // phpcs:ignore WordPress.DB.SlowDBQuery.slow_db_query_meta_query -- 管理画面のフィルタ用途
-                [
-                    'key' => '_andw_bound_post_id',
-                    'value' => $post_id,
-                    'compare' => '=',
-                    'type' => 'CHAR'
-                ]
-            ]
-        ];
-        $existing_ids = andw_cached_ids_query($args, 60);
-        $existing_notes = !empty($existing_ids) ? get_posts(['post__in' => $existing_ids, 'post_type' => self::CPT]) : [];
-        
-        if (!empty($existing_notes)) {
-            if (defined('WP_DEBUG_LOG') && WP_DEBUG_LOG) {
-                andw_log('[fallback] CPT already exists for post ' . $post_id . ', skipping fallback creation');
-            }
-            return; // 既にCPTが存在する場合はスキップ
-        }
-        
-        // メタデータを確認
-        $work_title = get_post_meta($post_id, '_andw_work_title', true);
-        $work_content = get_post_meta($post_id, '_andw_work_content', true);
-        $requester = get_post_meta($post_id, '_andw_requester', true);
-        $worker = get_post_meta($post_id, '_andw_worker', true);
-        $status = get_post_meta($post_id, '_andw_status', true);
-        $work_date = get_post_meta($post_id, '_andw_work_date', true);
-        $target_label = get_post_meta($post_id, '_andw_target_label', true);
-        
-        // いずれかのフィールドが空でない場合のみ処理続行
-        $has_content = !empty($work_title) || !empty($work_content) || !empty($requester) || 
-                      !empty($worker) || !empty($status) || !empty($work_date) || !empty($target_label);
-        
-        if (!$has_content) return;
-        
-        if (defined('WP_DEBUG_LOG') && WP_DEBUG_LOG) {
-            andw_log('[fallback] Creating CPT via wp_after_insert_post for post ' . $post_id);
-        }
-        
-        // auto_create_work_note_from_meta と同じロジックでCPT作成
-        $this->create_work_note_from_meta_data($post_id, $post);
-    }
-    
-    /**
-     * メタデータからCPT作成の共通処理
-     * auto_create_work_note_from_meta と fallback_create_work_note_from_meta で共用
-     */
-    private function create_work_note_from_meta_data($post_id, $post) {
-        // 作業メモ関連のメタデータを取得
-        $target_type = get_post_meta($post_id, '_andw_target_type', true);
-        $target_id = get_post_meta($post_id, '_andw_target_id', true);
-        $target_label = get_post_meta($post_id, '_andw_target_label', true);
-        $requester = get_post_meta($post_id, '_andw_requester', true);
-        $worker = get_post_meta($post_id, '_andw_worker', true);
-        $status = get_post_meta($post_id, '_andw_status', true);
-        $work_date = get_post_meta($post_id, '_andw_work_date', true);
-        $work_title = get_post_meta($post_id, '_andw_work_title', true);
-        $work_content = get_post_meta($post_id, '_andw_work_content', true);
-        
-        // 重複防止のためのハッシュ生成
-        $meta_payload = [
-            'target_type' => $target_type,
-            'target_id' => $target_id,
-            'target_label' => $target_label,
-            'requester' => $requester,
-            'worker' => $worker,
-            'status' => $status,
-            'work_date' => $work_date,
-            'work_title' => $work_title,
-            'work_content' => $work_content,
-            'post_id' => $post_id
-        ];
-        
-        $content_hash = md5(serialize($meta_payload));
-        
-        // 同一内容のCPTが既に存在するかチェック: meta_queryで重複ハッシュ検索
-        // Plugin Check緩和: 推奨 INDEX(meta_key, meta_value) for _andw_content_hash
-        $args = [
-            'post_type' => self::CPT,
-            'meta_query' => [ // phpcs:ignore WordPress.DB.SlowDBQuery.slow_db_query_meta_query -- 管理画面のフィルタ用途
-                [
-                    'key' => '_andw_content_hash',
-                    'value' => $content_hash,
-                    'compare' => '=',
-                    'type' => 'CHAR'
-                ]
-            ]
-        ];
-        $duplicate_ids = andw_cached_ids_query($args, 60);
-        $duplicate_check = !empty($duplicate_ids) ? get_posts(['post__in' => $duplicate_ids, 'post_type' => self::CPT]) : [];
-        
-        if (!empty($duplicate_check)) {
-            if (defined('WP_DEBUG_LOG') && WP_DEBUG_LOG) {
-                andw_log(' Duplicate work note detected, skipping creation for post ' . $post_id);
-            }
-            return;
-        }
-        
-        // CPT作成
-        $work_note_id = wp_insert_post([
-            'post_type' => self::CPT,
-            'post_status' => 'publish',
-            'post_title' => !empty($work_title) ? $work_title : 'Work Note for Post ' . $post_id,
-            'post_content' => $work_content,
-            'meta_input' => [
-                '_andw_target_type' => $target_type ?: $post->post_type,
-                '_andw_target_id' => $target_id ?: $post_id,
-                // '_andw_target_label' => $target_label, // 廃止：作業タイトルに統合
-                '_andw_requester' => $requester,
-                '_andw_worker' => $worker,
-                '_andw_status' => $status,
-                '_andw_work_date' => $work_date,
-                '_andw_work_title' => $work_title,
-                '_andw_work_content' => $work_content,
-                '_andw_bound_post_id' => $post_id,
-                '_andw_content_hash' => $content_hash
-            ]
-        ]);
-        
-        if ($work_note_id && !is_wp_error($work_note_id)) {
-            if (defined('WP_DEBUG_LOG') && WP_DEBUG_LOG) {
-                $request_time = isset($_SERVER['REQUEST_TIME_FLOAT']) ? (float)$_SERVER['REQUEST_TIME_FLOAT'] : microtime(true);
-                andw_log('Auto-created work note ID: ' . $work_note_id . ' for post ID: ' . $post_id . ' (elapsed: ' . (microtime(true) * 1000 - $request_time * 1000) . 'ms)');
-            }
-        } else {
-            if (defined('WP_DEBUG_LOG') && WP_DEBUG_LOG) {
-                $error_msg = is_wp_error($work_note_id) ? $work_note_id->get_error_message() : 'Unknown error';
-                andw_log(' Failed to create work note for post ' . $post_id . ': ' . $error_msg);
-            }
-        }
-    }
-    
-    /**
-     * 既存データのソフト移行：旧メタからpost_title/post_contentへの一回限り移行
-     * save_postフックで実行（作業メモCPTのみ対象）
-     */
-    public function migrate_legacy_meta_to_post_fields($post_id, $post) {
-        // 作業メモCPTのみ対象
-        if ($post->post_type !== self::CPT) {
-            return;
-        }
-        
-        // 自動保存・リビジョン・権限チェック
-        if (wp_is_post_autosave($post_id) || wp_is_post_revision($post_id)) {
-            return;
-        }
-        
-        if (!current_user_can('edit_post', $post_id)) {
-            return;
-        }
-        
-        // トグル機能（緊急切戻し用）
-        if (!apply_filters('andw_enable_legacy_migration', true)) {
-            return;
-        }
-        
-        // 現在のpost_title/post_contentを取得
-        $current_title = get_post_field('post_title', $post_id);
-        $current_content = get_post_field('post_content', $post_id);
-        
-        // 旧メタフィールドを取得
-        $legacy_title = get_post_meta($post_id, '_andw_work_title', true);
-        $legacy_content = get_post_meta($post_id, '_andw_work_content', true);
-        $legacy_target_label = get_post_meta($post_id, '_andw_target_label', true);
-        
-        $needs_migration = false;
-        $migration_data = [];
-        
-        // タイトル移行判定（空か固定文字列の場合）
-        if (empty($current_title) || preg_match('/^作業メモ \d{4}-\d{2}-\d{2} \d{2}:\d{2}$/', $current_title)) {
-            $new_title = $legacy_title ?: $legacy_target_label;
-            if (!empty($new_title)) {
-                $migration_data['post_title'] = sanitize_text_field($new_title);
-                $needs_migration = true;
-                
-                if (defined('WP_DEBUG_LOG') && WP_DEBUG_LOG) {
-                    andw_log(' Migration: title "' . $current_title . '" -> "' . $new_title . '"');
-                }
-            }
-        }
-        
-        // 内容移行判定（空か自動生成文字列の場合）
-        if (empty($current_content) || strpos($current_content, '投稿「') === 0) {
-            if (!empty($legacy_content)) {
-                $migration_data['post_content'] = wp_kses_post($legacy_content);
-                $needs_migration = true;
-                
-                if (defined('WP_DEBUG_LOG') && WP_DEBUG_LOG) {
-                    andw_log(' Migration: migrating legacy content to post_content');
-                }
-            }
-        }
-        
-        // 移行実行
-        if ($needs_migration) {
-            $migration_data['ID'] = $post_id;
-            $result = wp_update_post($migration_data, true);
-            
-            if (!is_wp_error($result)) {
-                // 移行済みフラグを設定（重複移行防止）
-                update_post_meta($post_id, '_andw_migrated_to_post_fields', current_time('Y-m-d H:i:s'));
-                
-                if (defined('WP_DEBUG_LOG') && WP_DEBUG_LOG) {
-                    andw_log(' Successfully migrated legacy meta to post fields for CPT ID: ' . $post_id);
-                }
-            } else {
-                if (defined('WP_DEBUG_LOG') && WP_DEBUG_LOG) {
-                    andw_log(' Migration failed for CPT ID ' . $post_id . ': ' . $result->get_error_message());
-                }
-            }
-        }
-    }
-    
-    /**
-     * Phase 2: 親投稿IDからCPTを取得または作成
-     * @wordpress/dataで利用するためのCPT管理メソッド
-     */
-    public function get_or_create_work_note_cpt($parent_id) {
-        // 既存のCPT IDを取得
-        $cpt_id = get_post_meta($parent_id, '_andw_bound_cpt_id', true);
-        
-        // CPTが存在するかチェック
-        if ($cpt_id && get_post_status($cpt_id)) {
-            return intval($cpt_id);
-        }
-        
-        // Phase 2: 新規CPT作成（最小構成）
-        $parent_post = get_post($parent_id);
-        if (!$parent_post) {
-            return false;
-        }
-        
-        $note_id = wp_insert_post([
-            'post_type' => self::CPT,
-            'post_status' => 'publish',
-            'post_title' => '作業メモ ' . current_time('Y-m-d H:i'),
-            'post_content' => '',
-            'post_author' => get_current_user_id(),
-            'post_date' => current_time('mysql'),
-            'post_date_gmt' => gmdate('Y-m-d H:i:s'),
-        ], true);
-        
-        if (!is_wp_error($note_id) && $note_id) {
-            // Phase 2: 双方向関連付け
-            update_post_meta($note_id, '_andw_bound_post_id', $parent_id);
-            update_post_meta($parent_id, '_andw_bound_cpt_id', $note_id);
-            
-            // Phase 2: 他の必須メタデータを設定
-            update_post_meta($note_id, '_andw_target_type', $parent_post->post_type);
-            update_post_meta($note_id, '_andw_target_id', $parent_id);
-            update_post_meta($note_id, '_andw_status', '依頼');
-            update_post_meta($note_id, '_andw_work_date', current_time('Y-m-d'));
-            
-            // Phase 2: キャッシュクリア
-            clean_post_cache($note_id);
-            clean_post_cache($parent_id);
-            
-            if (defined('WP_DEBUG_LOG') && WP_DEBUG_LOG) {
-                andw_log('PHASE2] CPT created for parent: parent=' . $parent_id . ' cpt=' . $note_id);
-            }
-            
-            return intval($note_id);
-        }
-        
-        return false;
-    }
-    
-    /**
-     * Phase 1: CPT削除時の親投稿メタデータクリーンアップ
-     * CPTを削除したらサイドメニューからも消えるようにする
-     */
-    public function cleanup_parent_meta_on_cpt_delete($post_id) {
-        // andw_work_note タイプの投稿のみ対象
-        if (get_post_type($post_id) !== self::CPT) {
-            return;
-        }
-        
-        // 親投稿IDを取得
-        $parent_id = get_post_meta($post_id, '_andw_bound_post_id', true);
-        if (!$parent_id) {
-            return;
-        }
-        
-        // Phase 1: 親投稿の関連メタデータを削除（サイドメニューからクリア）
-        $deleted_metas = [];
-        $meta_keys = [
-            '_andw_work_title',
-            '_andw_work_content',
-            '_andw_last_sync_hash'
-        ];
-        
-        foreach ($meta_keys as $meta_key) {
-            if (delete_post_meta($parent_id, $meta_key)) {
-                $deleted_metas[] = $meta_key;
-            }
-        }
-        
-        // Phase 1: 親投稿のキャッシュクリア
-        clean_post_cache($parent_id);
-        
-        if (defined('WP_DEBUG_LOG') && WP_DEBUG_LOG) {
-            andw_log('PHASE1] CPT deletion cleanup: post=' . $post_id . ' parent=' . $parent_id . ' cleared_metas=' . implode(',', $deleted_metas));
-        }
-    }
-    
-    /**
-     * wp_after_insert_postフックでの最終的な作業メモCPT作成
-     * メタデータ保存が確実に完了した後に実行される
-     */
-    public function final_create_work_note_from_meta($post_id, $post, $update, $post_before) {
-        // ガード条件
-        if (wp_is_post_revision($post_id)) return;
-        if (wp_is_post_autosave($post_id)) return;
-        if (defined('DOING_AUTOSAVE') && DOING_AUTOSAVE) return;
-        if (!current_user_can('edit_post', $post_id)) return;
-        
-        // 投稿タイプの制限：postとpageのみ対象
-        if (!in_array($post->post_type, ['post', 'page'])) {
-            return;
-        }
-        
-        // 更新時のみ実行（新規投稿は除く）
-        if (!$update) {
-            return;
-        }
-        
-        // === 重要: 複数ソースからメタデータを取得して最新値を特定 ===
-        $work_title = '';
-        $work_content = '';
-        
-        // 1. REST APIリクエストから直接取得を試行
-        if (defined('REST_REQUEST') && REST_REQUEST) {
-            $request_body = file_get_contents('php://input');
-            if ($request_body) {
-                $decoded = json_decode($request_body, true);
-                if (isset($decoded['meta'])) {
-                    $work_title = $decoded['meta']['_andw_work_title'] ?? '';
-                    $work_content = $decoded['meta']['_andw_work_content'] ?? '';
-                }
-            }
-        }
-        
-        // 2. $_POSTから取得を試行
-        if (empty($work_title) && empty($work_content)) {
-            // nonce検証を明示的に実行
-            if (isset($_POST[self::NONCE]) && wp_verify_nonce(sanitize_text_field(wp_unslash($_POST[self::NONCE])), self::NONCE)) {
-                // $_POST['meta'] を unslash→sanitize（ネスト浅想定）
+		// 初期値用の最新作業メモを取得
+		$prefill_data = null;
+		if ( $current_post_id ) {
+			$latest_note = $this->get_latest_work_note_for_prefill( $current_post_id );
+			if ( $latest_note ) {
+				$prefill_data = array(
+					'target_type'     => $latest_note['target_type'] ?: 'post',
+					'target_id'       => (string) $current_post_id, // 現在の投稿IDを設定
+					'requester'       => $latest_note['requester'],
+					'worker'          => $latest_note['worker'],
+					'needs_backfill'  => $latest_note['needs_backfill'],
+					'note_id'         => $latest_note['note_id'],
+					'current_post_id' => $current_post_id,
+				);
+			}
+		}
+
+		wp_localize_script(
+			'andw-gutenberg-sidebar',
+			'andwGutenbergData',
+			array(
+				'requesters' => $requesters,
+				'workers'    => $workers,
+				'ajax_url'   => admin_url( 'admin-ajax.php' ),
+				'nonce'      => wp_create_nonce( 'andw_sidebar_nonce' ),
+			)
+		);
+
+		// AJAX作業メモ作成用のnonce（別の変数として設定）
+		wp_localize_script(
+			'andw-gutenberg-sidebar',
+			'andwAjax',
+			array(
+				'nonce'    => wp_create_nonce( 'andw_create_work_note' ),
+				'ajax_url' => admin_url( 'admin-ajax.php' ),
+			)
+		);
+
+		// 初期値データを別の変数として渡す
+		wp_localize_script( 'andw-gutenberg-sidebar', 'andwPrefill', $prefill_data ?: array() );
+	}
+
+	/**
+	 * Gutenberg エディタかどうかを判定
+	 */
+	private function is_gutenberg_editor() {
+		// WordPress 5.0+ のブロックエディタチェック
+		if ( function_exists( 'use_block_editor_for_post' ) ) {
+			global $post;
+			return $post && use_block_editor_for_post( $post );
+		}
+
+		// 旧バージョン対応
+		if ( function_exists( 'is_gutenberg_page' ) ) {
+			return is_gutenberg_page();
+		}
+
+		return false;
+	}
+
+	/**
+	 * 指定投稿に紐づく最新の作業メモを取得（初期値流し込み用）
+	 * 正規リンク→フォールバック→lazy backfillの順で実行
+	 */
+	private function get_latest_work_note_for_prefill( $post_id ) {
+		$post_id = (int) $post_id;
+		if ( ! $post_id ) {
+			return null;
+		}
+
+		// 1. 正規リンクで検索（_andw_bound_post_id）: meta_queryで投稿に関連する作業ノート取得
+		// Plugin Check緩和: 推奨 INDEX(meta_key, meta_value) for _andw_bound_post_id
+		$query_args = array(
+			'post_type'      => self::CPT,
+			'posts_per_page' => 1,
+			'post_status'    => 'publish',
+			'meta_query'     => array( // phpcs:ignore WordPress.DB.SlowDBQuery.slow_db_query_meta_query -- 管理画面のフィルタ用途
+				array(
+		'key'     => '_andw_bound_post_id',
+		'value'   => $post_id,
+		'type'    => 'NUMERIC',
+		'compare' => '=',
+				),
+			),
+			'orderby'        => array(
+				'meta_value'        => 'DESC',         // phpcs:ignore WordPress.DB.SlowDBQuery.slow_db_query_meta_value -- 絞り込みに必要 実施日優先
+				'post_modified_gmt' => 'DESC', // 次点で更新日時
+				'post_date'         => 'DESC',          // 最後に作成日時
+			),
+			'meta_key'       => '_andw_work_date',    // phpcs:ignore WordPress.DB.SlowDBQuery.slow_db_query_meta_key -- 並び替えに必要
+			'meta_type'      => 'CHAR', // Y-m-d 形式の日付文字列を正しくソート
+		);
+
+		$ids         = andw_cached_ids_query( $query_args, 60 );
+		$query_posts = ! empty( $ids ) ? get_posts(
+			array(
+				'post__in'  => $ids,
+				'orderby'   => 'post__in',
+				'post_type' => self::CPT,
+			)
+		) : array();
+
+		// WP_Query形式のオブジェクトとして結果を包装
+		$query        = new stdClass();
+		$query->posts = $query_posts;
+
+		// 2. 正規リンクでヒットしない場合、フォールバック検索: Plugin Check緩和
+		if ( empty( $query->posts ) ) {
+			// Plugin Check緩和: meta_queryで未リンク作業ノートを検索（推奨INDEX追加）
+			$query_args['meta_query'] = array( // phpcs:ignore WordPress.DB.SlowDBQuery.slow_db_query_meta_query -- 管理画面のフィルタ用途
+				'relation' => 'AND',
+				array(
+			'key'     => '_andw_target_type',
+			'value'   => array( 'post', 'page' ),
+			'compare' => 'IN',
+			'type'    => 'CHAR',
+				),
+				array(
+				'key'     => '_andw_target_id',
+				'value'   => (string) $post_id,
+				'compare' => '=',
+				'type'    => 'CHAR',
+				),
+			);
+
+			$fallback_ids = andw_cached_ids_query( $query_args, 60 );
+			$query->posts = ! empty( $fallback_ids ) ? get_posts(
+				array(
+					'post__in'  => $fallback_ids,
+					'orderby'   => 'post__in',
+					'post_type' => self::CPT,
+				)
+			) : array();
+		}
+
+		if ( empty( $query->posts ) ) {
+			return null;
+		}
+
+		$latest_note = $query->posts[0];
+
+		// フォールバック経由で取得した場合、lazy backfill用の情報を返す
+		$needs_backfill = ! get_post_meta( $latest_note->ID, '_andw_bound_post_id', true );
+
+		return array(
+			'note_id'         => $latest_note->ID,
+			'target_type'     => get_post_meta( $latest_note->ID, '_andw_target_type', true ),
+			'target_id'       => get_post_meta( $latest_note->ID, '_andw_target_id', true ),
+			'requester'       => get_post_meta( $latest_note->ID, '_andw_requester', true ),
+			'worker'          => get_post_meta( $latest_note->ID, '_andw_worker', true ),
+			'needs_backfill'  => $needs_backfill,
+			'current_post_id' => $post_id,
+		);
+	}
+
+	/**
+	 * サイドバーデータ取得用AJAX
+	 */
+	public function ajax_get_sidebar_data() {
+		$nonce = isset( $_POST['nonce'] ) ? sanitize_text_field( wp_unslash( $_POST['nonce'] ) ) : '';
+		if ( ! wp_verify_nonce( $nonce, 'andw_sidebar_nonce' ) ) {
+			wp_send_json_error( array( 'message' => __( 'セキュリティチェックに失敗しました。', 'andw-work-notes' ) ) );
+		}
+
+		if ( ! current_user_can( 'edit_posts' ) ) {
+			wp_send_json_error( array( 'message' => __( 'この操作を実行する権限がありません。', 'andw-work-notes' ) ) );
+		}
+
+		$data = array(
+			'requesters' => $this->normalize_option_data( 'andw_requesters', array() ),
+			'workers'    => $this->normalize_option_data( 'andw_workers', $this->default_workers() ),
+		);
+
+		wp_send_json_success( $data );
+	}
+
+
+
+
+	/**
+	 * タイミング調査用: 早期段階でのメタデータ確認
+	 */
+	public function debug_save_timing_early( $post_id, $post ) {
+		if ( ! defined( 'WP_DEBUG_LOG' ) || ! WP_DEBUG_LOG ) {
+			return;
+		}
+		if ( ! in_array( $post->post_type, array( 'post', 'page' ) ) ) {
+			return;
+		}
+
+		$work_title     = get_post_meta( $post_id, '_andw_work_title', true );
+		$work_content   = get_post_meta( $post_id, '_andw_work_content', true );
+		$current_action = current_action();
+		$is_rest        = defined( 'REST_REQUEST' ) && REST_REQUEST ? 'true' : 'false';
+
+		andw_log( 'TIMING EARLY] Hook: ' . $current_action . ', Post: ' . $post_id . ', REST: ' . $is_rest . ', Title: "' . $work_title . '", Content: "' . $work_content . '"' );
+	}
+
+	/**
+	 * タイミング調査用: 遅期段階でのメタデータ確認
+	 */
+	public function debug_save_timing_late( $post_id, $post ) {
+		if ( ! defined( 'WP_DEBUG_LOG' ) || ! WP_DEBUG_LOG ) {
+			return;
+		}
+		if ( ! in_array( $post->post_type, array( 'post', 'page' ) ) ) {
+			return;
+		}
+
+		$work_title     = get_post_meta( $post_id, '_andw_work_title', true );
+		$work_content   = get_post_meta( $post_id, '_andw_work_content', true );
+		$current_action = current_action();
+
+		// 作成されたCPTの確認: meta_queryでデバッグ用作業ノート取得
+		// Plugin Check緩和: 推奨 INDEX(meta_key, meta_value) for _andw_bound_post_id
+		$args          = array(
+			'post_type'      => self::CPT,
+			'posts_per_page' => 1,
+			'meta_query'     => array( // phpcs:ignore WordPress.DB.SlowDBQuery.slow_db_query_meta_query -- 管理画面のフィルタ用途
+				array(
+					'key'     => '_andw_bound_post_id',
+					'value'   => $post_id,
+					'compare' => '=',
+					'type'    => 'CHAR',
+				),
+			),
+		);
+		$created_ids   = andw_cached_ids_query( $args, 60 );
+		$created_notes = ! empty( $created_ids ) ? get_posts(
+			array(
+				'post__in'  => $created_ids,
+				'post_type' => self::CPT,
+			)
+		) : array();
+
+		$cpt_count = count( $created_notes );
+		$cpt_info  = '';
+		if ( $cpt_count > 0 ) {
+			$note        = $created_notes[0];
+			$cpt_title   = get_post_meta( $note->ID, '_andw_work_title', true );
+			$cpt_content = get_post_meta( $note->ID, '_andw_work_content', true );
+			$cpt_info    = ' CPT_ID: ' . $note->ID . ', CPT_Title: "' . $cpt_title . '", CPT_Content: "' . $cpt_content . '"';
+		}
+
+		andw_log( 'TIMING LATE] Hook: ' . $current_action . ', Post: ' . $post_id . ', Title: "' . $work_title . '", Content: "' . $work_content . '", CPT_Count: ' . $cpt_count . $cpt_info );
+	}
+
+	/**
+	 * wp_after_insert_post調査用: 投稿挿入完了後のメタデータ確認
+	 */
+	public function debug_after_insert_post( $post_id, $post, $update, $post_before ) {
+		if ( ! defined( 'WP_DEBUG_LOG' ) || ! WP_DEBUG_LOG ) {
+			return;
+		}
+		if ( ! in_array( $post->post_type, array( 'post', 'page' ) ) ) {
+			return;
+		}
+
+		$work_title   = get_post_meta( $post_id, '_andw_work_title', true );
+		$work_content = get_post_meta( $post_id, '_andw_work_content', true );
+		$requester    = get_post_meta( $post_id, '_andw_requester', true );
+		$worker       = get_post_meta( $post_id, '_andw_worker', true );
+		$status       = get_post_meta( $post_id, '_andw_status', true );
+		$work_date    = get_post_meta( $post_id, '_andw_work_date', true );
+		$target_label = get_post_meta( $post_id, '_andw_target_label', true );
+
+		$is_rest       = defined( 'REST_REQUEST' ) && REST_REQUEST ? 'true' : 'false';
+		$update_status = $update ? 'update' : 'new';
+
+		andw_log( '[wp_after_insert] Post: ' . $post_id . ', Type: ' . $post->post_type . ', Update: ' . $update_status . ', REST: ' . $is_rest );
+		andw_log( '[wp_after_insert] work_title="' . $work_title . '" work_content="' . $work_content . '" requester="' . $requester . '" worker="' . $worker . '" status="' . $status . '" work_date="' . $work_date . '" target_label="' . $target_label . '"' );
+	}
+
+	/**
+	 * wp_after_insert_postでのバックアップCPT作成
+	 * save_postで作成できなかった場合の保険処理
+	 */
+	public function fallback_create_work_note_from_meta( $post_id, $post, $update, $post_before ) {
+		// ガード条件
+		if ( ! in_array( $post->post_type, array( 'post', 'page' ) ) ) {
+			return;
+		}
+		if ( wp_is_post_revision( $post_id ) ) {
+			return;
+		}
+		if ( wp_is_post_autosave( $post_id ) ) {
+			return;
+		}
+		if ( ! current_user_can( 'edit_post', $post_id ) ) {
+			return;
+		}
+
+		// 既にCPTが作成されているかチェック: meta_queryで重複作成防止
+		// Plugin Check緩和: 推奨 INDEX(meta_key, meta_value) for _andw_bound_post_id
+		$args           = array(
+			'post_type'      => self::CPT,
+			'posts_per_page' => 1,
+			'meta_query'     => array( // phpcs:ignore WordPress.DB.SlowDBQuery.slow_db_query_meta_query -- 管理画面のフィルタ用途
+				array(
+					'key'     => '_andw_bound_post_id',
+					'value'   => $post_id,
+					'compare' => '=',
+					'type'    => 'CHAR',
+				),
+			),
+		);
+		$existing_ids   = andw_cached_ids_query( $args, 60 );
+		$existing_notes = ! empty( $existing_ids ) ? get_posts(
+			array(
+				'post__in'  => $existing_ids,
+				'post_type' => self::CPT,
+			)
+		) : array();
+
+		if ( ! empty( $existing_notes ) ) {
+			if ( defined( 'WP_DEBUG_LOG' ) && WP_DEBUG_LOG ) {
+				andw_log( '[fallback] CPT already exists for post ' . $post_id . ', skipping fallback creation' );
+			}
+			return; // 既にCPTが存在する場合はスキップ
+		}
+
+		// メタデータを確認
+		$work_title   = get_post_meta( $post_id, '_andw_work_title', true );
+		$work_content = get_post_meta( $post_id, '_andw_work_content', true );
+		$requester    = get_post_meta( $post_id, '_andw_requester', true );
+		$worker       = get_post_meta( $post_id, '_andw_worker', true );
+		$status       = get_post_meta( $post_id, '_andw_status', true );
+		$work_date    = get_post_meta( $post_id, '_andw_work_date', true );
+		$target_label = get_post_meta( $post_id, '_andw_target_label', true );
+
+		// いずれかのフィールドが空でない場合のみ処理続行
+		$has_content = ! empty( $work_title ) || ! empty( $work_content ) || ! empty( $requester ) ||
+						! empty( $worker ) || ! empty( $status ) || ! empty( $work_date ) || ! empty( $target_label );
+
+		if ( ! $has_content ) {
+			return;
+		}
+
+		if ( defined( 'WP_DEBUG_LOG' ) && WP_DEBUG_LOG ) {
+			andw_log( '[fallback] Creating CPT via wp_after_insert_post for post ' . $post_id );
+		}
+
+		// auto_create_work_note_from_meta と同じロジックでCPT作成
+		$this->create_work_note_from_meta_data( $post_id, $post );
+	}
+
+	/**
+	 * メタデータからCPT作成の共通処理
+	 * auto_create_work_note_from_meta と fallback_create_work_note_from_meta で共用
+	 */
+	private function create_work_note_from_meta_data( $post_id, $post ) {
+		// 作業メモ関連のメタデータを取得
+		$target_type  = get_post_meta( $post_id, '_andw_target_type', true );
+		$target_id    = get_post_meta( $post_id, '_andw_target_id', true );
+		$target_label = get_post_meta( $post_id, '_andw_target_label', true );
+		$requester    = get_post_meta( $post_id, '_andw_requester', true );
+		$worker       = get_post_meta( $post_id, '_andw_worker', true );
+		$status       = get_post_meta( $post_id, '_andw_status', true );
+		$work_date    = get_post_meta( $post_id, '_andw_work_date', true );
+		$work_title   = get_post_meta( $post_id, '_andw_work_title', true );
+		$work_content = get_post_meta( $post_id, '_andw_work_content', true );
+
+		// 重複防止のためのハッシュ生成
+		$meta_payload = array(
+			'target_type'  => $target_type,
+			'target_id'    => $target_id,
+			'target_label' => $target_label,
+			'requester'    => $requester,
+			'worker'       => $worker,
+			'status'       => $status,
+			'work_date'    => $work_date,
+			'work_title'   => $work_title,
+			'work_content' => $work_content,
+			'post_id'      => $post_id,
+		);
+
+		$content_hash = md5( serialize( $meta_payload ) );
+
+		// 同一内容のCPTが既に存在するかチェック: meta_queryで重複ハッシュ検索
+		// Plugin Check緩和: 推奨 INDEX(meta_key, meta_value) for _andw_content_hash
+		$args            = array(
+			'post_type'  => self::CPT,
+			'meta_query' => array( // phpcs:ignore WordPress.DB.SlowDBQuery.slow_db_query_meta_query -- 管理画面のフィルタ用途
+				array(
+					'key'     => '_andw_content_hash',
+					'value'   => $content_hash,
+					'compare' => '=',
+					'type'    => 'CHAR',
+				),
+			),
+		);
+		$duplicate_ids   = andw_cached_ids_query( $args, 60 );
+		$duplicate_check = ! empty( $duplicate_ids ) ? get_posts(
+			array(
+				'post__in'  => $duplicate_ids,
+				'post_type' => self::CPT,
+			)
+		) : array();
+
+		if ( ! empty( $duplicate_check ) ) {
+			if ( defined( 'WP_DEBUG_LOG' ) && WP_DEBUG_LOG ) {
+				andw_log( ' Duplicate work note detected, skipping creation for post ' . $post_id );
+			}
+			return;
+		}
+
+		// CPT作成
+		$work_note_id = wp_insert_post(
+			array(
+				'post_type'    => self::CPT,
+				'post_status'  => 'publish',
+				'post_title'   => ! empty( $work_title ) ? $work_title : 'Work Note for Post ' . $post_id,
+				'post_content' => $work_content,
+				'meta_input'   => array(
+					'_andw_target_type'   => $target_type ?: $post->post_type,
+					'_andw_target_id'     => $target_id ?: $post_id,
+					// '_andw_target_label' => $target_label, // 廃止：作業タイトルに統合
+					'_andw_requester'     => $requester,
+					'_andw_worker'        => $worker,
+					'_andw_status'        => $status,
+					'_andw_work_date'     => $work_date,
+					'_andw_work_title'    => $work_title,
+					'_andw_work_content'  => $work_content,
+					'_andw_bound_post_id' => $post_id,
+					'_andw_content_hash'  => $content_hash,
+				),
+			)
+		);
+
+		if ( $work_note_id && ! is_wp_error( $work_note_id ) ) {
+			if ( defined( 'WP_DEBUG_LOG' ) && WP_DEBUG_LOG ) {
+				$request_time = isset( $_SERVER['REQUEST_TIME_FLOAT'] ) ? (float) $_SERVER['REQUEST_TIME_FLOAT'] : microtime( true );
+				andw_log( 'Auto-created work note ID: ' . $work_note_id . ' for post ID: ' . $post_id . ' (elapsed: ' . ( microtime( true ) * 1000 - $request_time * 1000 ) . 'ms)' );
+			}
+		} elseif ( defined( 'WP_DEBUG_LOG' ) && WP_DEBUG_LOG ) {
+				$error_msg = is_wp_error( $work_note_id ) ? $work_note_id->get_error_message() : 'Unknown error';
+				andw_log( ' Failed to create work note for post ' . $post_id . ': ' . $error_msg );
+		}
+	}
+
+	/**
+	 * 既存データのソフト移行：旧メタからpost_title/post_contentへの一回限り移行
+	 * save_postフックで実行（作業メモCPTのみ対象）
+	 */
+	public function migrate_legacy_meta_to_post_fields( $post_id, $post ) {
+		// 作業メモCPTのみ対象
+		if ( $post->post_type !== self::CPT ) {
+			return;
+		}
+
+		// 自動保存・リビジョン・権限チェック
+		if ( wp_is_post_autosave( $post_id ) || wp_is_post_revision( $post_id ) ) {
+			return;
+		}
+
+		if ( ! current_user_can( 'edit_post', $post_id ) ) {
+			return;
+		}
+
+		// トグル機能（緊急切戻し用）
+		if ( ! apply_filters( 'andw_enable_legacy_migration', true ) ) {
+			return;
+		}
+
+		// 現在のpost_title/post_contentを取得
+		$current_title   = get_post_field( 'post_title', $post_id );
+		$current_content = get_post_field( 'post_content', $post_id );
+
+		// 旧メタフィールドを取得
+		$legacy_title        = get_post_meta( $post_id, '_andw_work_title', true );
+		$legacy_content      = get_post_meta( $post_id, '_andw_work_content', true );
+		$legacy_target_label = get_post_meta( $post_id, '_andw_target_label', true );
+
+		$needs_migration = false;
+		$migration_data  = array();
+
+		// タイトル移行判定（空か固定文字列の場合）
+		if ( empty( $current_title ) || preg_match( '/^作業メモ \d{4}-\d{2}-\d{2} \d{2}:\d{2}$/', $current_title ) ) {
+			$new_title = $legacy_title ?: $legacy_target_label;
+			if ( ! empty( $new_title ) ) {
+				$migration_data['post_title'] = sanitize_text_field( $new_title );
+				$needs_migration              = true;
+
+				if ( defined( 'WP_DEBUG_LOG' ) && WP_DEBUG_LOG ) {
+					andw_log( ' Migration: title "' . $current_title . '" -> "' . $new_title . '"' );
+				}
+			}
+		}
+
+		// 内容移行判定（空か自動生成文字列の場合）
+		if ( empty( $current_content ) || strpos( $current_content, '投稿「' ) === 0 ) {
+			if ( ! empty( $legacy_content ) ) {
+				$migration_data['post_content'] = wp_kses_post( $legacy_content );
+				$needs_migration                = true;
+
+				if ( defined( 'WP_DEBUG_LOG' ) && WP_DEBUG_LOG ) {
+					andw_log( ' Migration: migrating legacy content to post_content' );
+				}
+			}
+		}
+
+		// 移行実行
+		if ( $needs_migration ) {
+			$migration_data['ID'] = $post_id;
+			$result               = wp_update_post( $migration_data, true );
+
+			if ( ! is_wp_error( $result ) ) {
+				// 移行済みフラグを設定（重複移行防止）
+				update_post_meta( $post_id, '_andw_migrated_to_post_fields', current_time( 'Y-m-d H:i:s' ) );
+
+				if ( defined( 'WP_DEBUG_LOG' ) && WP_DEBUG_LOG ) {
+					andw_log( ' Successfully migrated legacy meta to post fields for CPT ID: ' . $post_id );
+				}
+			} elseif ( defined( 'WP_DEBUG_LOG' ) && WP_DEBUG_LOG ) {
+					andw_log( ' Migration failed for CPT ID ' . $post_id . ': ' . $result->get_error_message() );
+			}
+		}
+	}
+
+	/**
+	 * Phase 2: 親投稿IDからCPTを取得または作成
+	 *
+	 * @wordpress/dataで利用するためのCPT管理メソッド
+	 */
+	public function get_or_create_work_note_cpt( $parent_id ) {
+		// 既存のCPT IDを取得
+		$cpt_id = get_post_meta( $parent_id, '_andw_bound_cpt_id', true );
+
+		// CPTが存在するかチェック
+		if ( $cpt_id && get_post_status( $cpt_id ) ) {
+			return intval( $cpt_id );
+		}
+
+		// Phase 2: 新規CPT作成（最小構成）
+		$parent_post = get_post( $parent_id );
+		if ( ! $parent_post ) {
+			return false;
+		}
+
+		$note_id = wp_insert_post(
+			array(
+				'post_type'     => self::CPT,
+				'post_status'   => 'publish',
+				'post_title'    => '作業メモ ' . current_time( 'Y-m-d H:i' ),
+				'post_content'  => '',
+				'post_author'   => get_current_user_id(),
+				'post_date'     => current_time( 'mysql' ),
+				'post_date_gmt' => gmdate( 'Y-m-d H:i:s' ),
+			),
+			true
+		);
+
+		if ( ! is_wp_error( $note_id ) && $note_id ) {
+			// Phase 2: 双方向関連付け
+			update_post_meta( $note_id, '_andw_bound_post_id', $parent_id );
+			update_post_meta( $parent_id, '_andw_bound_cpt_id', $note_id );
+
+			// Phase 2: 他の必須メタデータを設定
+			update_post_meta( $note_id, '_andw_target_type', $parent_post->post_type );
+			update_post_meta( $note_id, '_andw_target_id', $parent_id );
+			update_post_meta( $note_id, '_andw_status', '依頼' );
+			update_post_meta( $note_id, '_andw_work_date', current_time( 'Y-m-d' ) );
+
+			// Phase 2: キャッシュクリア
+			clean_post_cache( $note_id );
+			clean_post_cache( $parent_id );
+
+			if ( defined( 'WP_DEBUG_LOG' ) && WP_DEBUG_LOG ) {
+				andw_log( 'PHASE2] CPT created for parent: parent=' . $parent_id . ' cpt=' . $note_id );
+			}
+
+			return intval( $note_id );
+		}
+
+		return false;
+	}
+
+	/**
+	 * Phase 1: CPT削除時の親投稿メタデータクリーンアップ
+	 * CPTを削除したらサイドメニューからも消えるようにする
+	 */
+	public function cleanup_parent_meta_on_cpt_delete( $post_id ) {
+		// andw_work_note タイプの投稿のみ対象
+		if ( get_post_type( $post_id ) !== self::CPT ) {
+			return;
+		}
+
+		// 親投稿IDを取得
+		$parent_id = get_post_meta( $post_id, '_andw_bound_post_id', true );
+		if ( ! $parent_id ) {
+			return;
+		}
+
+		// Phase 1: 親投稿の関連メタデータを削除（サイドメニューからクリア）
+		$deleted_metas = array();
+		$meta_keys     = array(
+			'_andw_work_title',
+			'_andw_work_content',
+			'_andw_last_sync_hash',
+		);
+
+		foreach ( $meta_keys as $meta_key ) {
+			if ( delete_post_meta( $parent_id, $meta_key ) ) {
+				$deleted_metas[] = $meta_key;
+			}
+		}
+
+		// Phase 1: 親投稿のキャッシュクリア
+		clean_post_cache( $parent_id );
+
+		if ( defined( 'WP_DEBUG_LOG' ) && WP_DEBUG_LOG ) {
+			andw_log( 'PHASE1] CPT deletion cleanup: post=' . $post_id . ' parent=' . $parent_id . ' cleared_metas=' . implode( ',', $deleted_metas ) );
+		}
+	}
+
+	/**
+	 * wp_after_insert_postフックでの最終的な作業メモCPT作成
+	 * メタデータ保存が確実に完了した後に実行される
+	 */
+	public function final_create_work_note_from_meta( $post_id, $post, $update, $post_before ) {
+		// ガード条件
+		if ( wp_is_post_revision( $post_id ) ) {
+			return;
+		}
+		if ( wp_is_post_autosave( $post_id ) ) {
+			return;
+		}
+		if ( defined( 'DOING_AUTOSAVE' ) && DOING_AUTOSAVE ) {
+			return;
+		}
+		if ( ! current_user_can( 'edit_post', $post_id ) ) {
+			return;
+		}
+
+		// 投稿タイプの制限：postとpageのみ対象
+		if ( ! in_array( $post->post_type, array( 'post', 'page' ) ) ) {
+			return;
+		}
+
+		// 更新時のみ実行（新規投稿は除く）
+		if ( ! $update ) {
+			return;
+		}
+
+		// === 重要: 複数ソースからメタデータを取得して最新値を特定 ===
+		$work_title   = '';
+		$work_content = '';
+
+		// 1. REST APIリクエストから直接取得を試行
+		if ( defined( 'REST_REQUEST' ) && REST_REQUEST ) {
+			$request_body = file_get_contents( 'php://input' );
+			if ( $request_body ) {
+				$decoded = json_decode( $request_body, true );
+				if ( isset( $decoded['meta'] ) ) {
+					$work_title   = $decoded['meta']['_andw_work_title'] ?? '';
+					$work_content = $decoded['meta']['_andw_work_content'] ?? '';
+				}
+			}
+		}
+
+		// 2. $_POSTから取得を試行
+		if ( empty( $work_title ) && empty( $work_content ) ) {
+			// nonce検証を明示的に実行
+			if ( isset( $_POST[ self::NONCE ] ) && wp_verify_nonce( sanitize_text_field( wp_unslash( $_POST[ self::NONCE ] ) ), self::NONCE ) ) {
+				// $_POST['meta'] を unslash→sanitize（ネスト浅想定）
                 // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- 次行でサニタイズ
-                $meta = isset($_POST['meta']) ? wp_unslash($_POST['meta']) : [];
-                $meta = is_array($meta) ? array_map(
-                    static function($v){ return is_array($v) ? array_map('sanitize_text_field',$v) : sanitize_text_field($v); },
-                    $meta
-                ) : [];
-                $work_title = isset($meta['_andw_work_title']) ? sanitize_text_field($meta['_andw_work_title']) : '';
-                $work_content = isset($meta['_andw_work_content']) ? wp_kses_post($meta['_andw_work_content']) : '';
-            }
-        }
-        
-        // 3. 最終手段: データベースから取得（キャッシュクリア後）
-        if (empty($work_title) && empty($work_content)) {
-            wp_cache_delete($post_id, 'post_meta');
-            clean_post_cache($post_id);
-            
-            // 短時間待機してメタデータ保存の完了を待つ
-            usleep(200000); // 0.2秒待機
-            
-            $work_title = get_post_meta($post_id, '_andw_work_title', true);
-            $work_content = get_post_meta($post_id, '_andw_work_content', true);
-        }
-        
-        // データのクリーニング
-        $work_title = trim(wp_strip_all_tags($work_title, true));
-        $work_content = trim(wp_strip_all_tags($work_content, true));
-        
-        if (defined('WP_DEBUG_LOG') && WP_DEBUG_LOG) {
-            andw_log('FINAL_CREATE] === wp_after_insert_post実行 ===');
-            andw_log('FINAL_CREATE] Post ID: ' . $post_id . ', Update: ' . ($update ? 'true' : 'false'));
-            andw_log('FINAL_CREATE] REST: ' . (defined('REST_REQUEST') && REST_REQUEST ? 'true' : 'false'));
-            andw_log('FINAL_CREATE] Retrieved work_title: "' . $work_title . '", work_content: "' . $work_content . '"');
-        }
-        
-        // 作業メモ関連のメタデータがない場合はスキップ
-        if (empty($work_title) && empty($work_content)) {
-            if (defined('WP_DEBUG_LOG') && WP_DEBUG_LOG) {
-                andw_log('FINAL_CREATE] No work meta found, skipping');
-            }
-            return;
-        }
-        
-        // === 改善された重複チェック ===
-        
-        // 1. 短時間内の重複実行を防ぐ
-        $execution_key = 'andw_execution_' . $post_id . '_' . md5($work_title . $work_content);
-        if (get_transient($execution_key)) {
-            if (defined('WP_DEBUG_LOG') && WP_DEBUG_LOG) {
-                andw_log('FINAL_CREATE] SKIP: Same content execution within last 5 seconds');
-            }
-            return;
-        }
-        set_transient($execution_key, time(), 5); // 5秒間のロック
-        
-        // 2. 既存の作業メモCPTをすべて取得して詳細比較: meta_queryで最終チェック
-        // Plugin Check緩和: 推奨 INDEX(meta_key, meta_value) for _andw_bound_post_id
-        $args = [
-            'post_type' => self::CPT,
-            'posts_per_page' => -1,
-            'orderby' => 'date',
-            'order' => 'DESC',
-            'meta_query' => [ // phpcs:ignore WordPress.DB.SlowDBQuery.slow_db_query_meta_query -- 管理画面のフィルタ用途
-                [
-                    'key' => '_andw_bound_post_id',
-                    'value' => $post_id,
-                    'compare' => '=',
-                    'type' => 'CHAR'
-                ]
-            ]
-        ];
-        $existing_ids = andw_cached_ids_query($args, 60);
-        $existing_notes = !empty($existing_ids) ? get_posts(['post__in' => $existing_ids, 'orderby' => 'post__in', 'post_type' => self::CPT]) : [];
-        
-        // 3. 最新のCPTと比較（内容の正規化を行って比較）
-        if (!empty($existing_notes)) {
-            foreach ($existing_notes as $existing_note) {
-                $existing_title = trim(wp_strip_all_tags(get_post_field('post_title', $existing_note->ID), true));
-                $existing_content = trim(wp_strip_all_tags(get_post_field('post_content', $existing_note->ID), true));
-                
-                // 正規化して比較
-                if ($existing_title === $work_title && $existing_content === $work_content) {
-                    if (defined('WP_DEBUG_LOG') && WP_DEBUG_LOG) {
-                        andw_log('FINAL_CREATE] SKIP: Identical content found in existing CPT #' . $existing_note->ID);
-                    }
-                    return;
-                }
-            }
-            
-            // 作成数の制限チェック（同一投稿に対して10個以上は作成しない）
-            if (count($existing_notes) >= 10) {
-                if (defined('WP_DEBUG_LOG') && WP_DEBUG_LOG) {
-                    andw_log('FINAL_CREATE] SKIP: Too many work notes (' . count($existing_notes) . ') for post #' . $post_id);
-                }
-                return;
-            }
-        }
-        
-        // 新しい作業メモCPTを作成
-        $note_title = !empty($work_title) ? sanitize_text_field($work_title) : '作業メモ ' . current_time('Y-m-d H:i');
-        $note_content = !empty($work_content) ? wp_kses_post($work_content) : '';
-        
-        $note_id = wp_insert_post([
-            'post_type' => self::CPT,
-            'post_status' => 'publish',
-            'post_title' => $note_title,
-            'post_content' => $note_content,
-            'post_author' => get_current_user_id(),
-            'post_date' => current_time('mysql'),
-            'post_date_gmt' => gmdate('Y-m-d H:i:s'),
-        ], true);
-        
-        if (!is_wp_error($note_id) && $note_id) {
-            // メタデータ設定
-            $target_type = get_post_meta($post_id, '_andw_target_type', true);
-            $requester = get_post_meta($post_id, '_andw_requester', true);
-            $worker = get_post_meta($post_id, '_andw_worker', true);
-            $status = get_post_meta($post_id, '_andw_status', true);
-            $work_date = get_post_meta($post_id, '_andw_work_date', true);
-            
-            update_post_meta($note_id, '_andw_target_type', $target_type ?: 'post');
-            update_post_meta($note_id, '_andw_target_id', (string)$post_id);
-            update_post_meta($note_id, '_andw_requester', $requester);
-            update_post_meta($note_id, '_andw_worker', $worker);
-            update_post_meta($note_id, '_andw_status', $status ?: '依頼');
-            update_post_meta($note_id, '_andw_work_date', $work_date ?: current_time('Y-m-d'));
-            update_post_meta($note_id, '_andw_bound_post_id', $post_id);
-            
-            // 親投稿のCPT ID配列を更新
-            $existing_cpt_ids = get_post_meta($post_id, '_andw_bound_cpt_ids', true);
-            if (!is_array($existing_cpt_ids)) {
-                $existing_cpt_ids = [];
-            }
-            $existing_cpt_ids[] = $note_id;
-            update_post_meta($post_id, '_andw_bound_cpt_ids', $existing_cpt_ids);
-            update_post_meta($post_id, '_andw_bound_cpt_id', $note_id);
-            
-            // 重複防止フラグを設定（1秒間有効・テスト用に短縮）
-            set_transient('andw_recent_create_' . $post_id, 1, 1);
-            
-            if (defined('WP_DEBUG_LOG') && WP_DEBUG_LOG) {
-                andw_log('FINAL_CREATE] SUCCESS: Created CPT ' . $note_id . ' with title: "' . $note_title . '"');
-            }
-        } else {
-            if (defined('WP_DEBUG_LOG') && WP_DEBUG_LOG) {
-                $error_msg = is_wp_error($note_id) ? $note_id->get_error_message() : 'Unknown error';
-                andw_log('FINAL_CREATE] FAILED: ' . $error_msg);
-            }
-        }
-    }
-    
-    /**
-     * JavaScript主導の作業メモ作成AJAXエンドポイント
-     * 投稿保存後に確実に最新のメタデータでCPTを作成
-     */
-    public function ajax_create_work_note() {
-        // デバッグログ: リクエスト受信
-        if (defined('WP_DEBUG_LOG') && WP_DEBUG_LOG) {
-            andw_log('=== AJAX作業メモ作成リクエスト受信 ===');
-            andw_log('$_POST data: ' . wp_json_encode(wp_unslash($_POST)));
-        }
-        
-        // ノンス検証
-        $nonce = isset($_POST['nonce']) ? sanitize_text_field(wp_unslash($_POST['nonce'])) : '';
-        if (!wp_verify_nonce($nonce, 'andw_create_work_note')) {
-            if (defined('WP_DEBUG_LOG') && WP_DEBUG_LOG) {
-                andw_log('Nonce verification failed: received="' . $nonce . '"');
-            }
-            wp_send_json_error(['message' => __('セキュリティチェックに失敗しました。', 'andw-work-notes')]);
-        }
-        
-        // パラメータ取得
-        $post_id = intval($_POST['post_id'] ?? 0);
-        $work_title = sanitize_text_field(wp_unslash($_POST['work_title'] ?? ''));
-        $work_content = wp_kses_post(wp_unslash($_POST['work_content'] ?? ''));
-        $requester = sanitize_text_field(wp_unslash($_POST['requester'] ?? ''));
-        $worker = sanitize_text_field(wp_unslash($_POST['worker'] ?? ''));
-        $status = sanitize_text_field(wp_unslash($_POST['status'] ?? '依頼'));
-        $work_date = sanitize_text_field(wp_unslash($_POST['work_date'] ?? ''));
-        
-        if (!$post_id || (!$work_title && !$work_content)) {
-            wp_send_json_error(['message' => __('必要なパラメータが不足しています。', 'andw-work-notes')]);
-        }
-        
-        // 権限チェック
-        if (!current_user_can('edit_post', $post_id)) {
-            wp_send_json_error(['message' => __('この投稿を編集する権限がありません。', 'andw-work-notes')]);
-        }
-        
-        try {
-            // 重複チェック：同じ内容の作業メモが最近作成されていないか確認
-            // Plugin Check緩和: meta_queryでAJAX重複防止、推奨 INDEX 作成
-            $args = [
-                'post_type' => self::CPT,
-                'posts_per_page' => 1,
-                'meta_query' => [ // phpcs:ignore WordPress.DB.SlowDBQuery.slow_db_query_meta_query -- 管理画面のフィルタ用途
-                    [
-                        'key' => '_andw_bound_post_id',
-                        'value' => $post_id,
-                        'compare' => '=',
-                        'type' => 'CHAR'
-                    ]
-                ],
-                'orderby' => 'date',
-                'order' => 'DESC'
-            ];
-            $existing_ids = andw_cached_ids_query($args, 60);
-            $existing_notes = !empty($existing_ids) ? get_posts(['post__in' => $existing_ids, 'orderby' => 'post__in', 'post_type' => self::CPT]) : [];
-            
-            // 最新のCPTと内容が同じなら重複として作成しない
-            if (!empty($existing_notes)) {
-                $latest_note = $existing_notes[0];
-                $latest_title = get_post_field('post_title', $latest_note->ID);
-                $latest_content = get_post_field('post_content', $latest_note->ID);
-                
-                if ($latest_title === $work_title && $latest_content === $work_content) {
-                    wp_send_json_success([
-                        'message' => __('同じ内容の作業メモが既に存在します。', 'andw-work-notes'),
-                        'note_id' => $latest_note->ID,
-                        'duplicate' => true
-                    ]);
-                    return;
-                }
-            }
-            
-            // 新しい作業メモCPTを作成
-            $note_title = !empty($work_title) ? $work_title : '作業メモ ' . current_time('Y-m-d H:i');
-            $note_content = !empty($work_content) ? $work_content : '';
-            
-            $note_id = wp_insert_post([
-                'post_type' => self::CPT,
-                'post_status' => 'publish',
-                'post_title' => $note_title,
-                'post_content' => $note_content,
-                'post_author' => get_current_user_id(),
-                'post_date' => current_time('mysql'),
-                'post_date_gmt' => gmdate('Y-m-d H:i:s'),
-            ], true);
-            
-            if (is_wp_error($note_id)) {
-                /* translators: %1$s: error message from WordPress */
-                wp_send_json_error(['message' => sprintf(__('CPT作成に失敗: %1$s', 'andw-work-notes'), esc_html($note_id->get_error_message()))]);
-            }
-            
-            // CPTメタデータを設定
-            update_post_meta($note_id, '_andw_target_type', 'post');
-            update_post_meta($note_id, '_andw_target_id', (string)$post_id);
-            update_post_meta($note_id, '_andw_requester', $requester);
-            update_post_meta($note_id, '_andw_worker', $worker);
-            update_post_meta($note_id, '_andw_status', $status ?: '依頼');
-            update_post_meta($note_id, '_andw_work_date', $work_date ?: current_time('Y-m-d'));
-            update_post_meta($note_id, '_andw_bound_post_id', $post_id);
-            
-            // 親投稿のCPT ID配列を更新
-            $existing_cpt_ids = get_post_meta($post_id, '_andw_bound_cpt_ids', true);
-            if (!is_array($existing_cpt_ids)) {
-                $existing_cpt_ids = [];
-            }
-            $existing_cpt_ids[] = $note_id;
-            update_post_meta($post_id, '_andw_bound_cpt_ids', $existing_cpt_ids);
-            update_post_meta($post_id, '_andw_bound_cpt_id', $note_id);
-            
-            if (defined('WP_DEBUG_LOG') && WP_DEBUG_LOG) {
-                andw_log('AJAX_CREATE] SUCCESS: Created CPT ' . $note_id . ' with title: "' . $note_title . '" via AJAX');
-            }
-            
-            wp_send_json_success([
-                'message' => __('作業メモを作成しました。', 'andw-work-notes'),
-                'note_id' => $note_id,
-                'note_title' => $note_title,
-                'note_content' => $note_content
-            ]);
-            
-        } catch (Exception $e) {
-            if (defined('WP_DEBUG_LOG') && WP_DEBUG_LOG) {
-                andw_log('AJAX_CREATE] ERROR: ' . $e->getMessage());
-            }
-            /* translators: %1$s: PHP exception message */
-            wp_send_json_error(['message' => sprintf(__('エラーが発生しました: %1$s', 'andw-work-notes'), esc_html($e->getMessage()))]);
-        }
-    }
-    
+				$meta         = isset( $_POST['meta'] ) ? wp_unslash( $_POST['meta'] ) : array();
+				$meta         = is_array( $meta ) ? array_map(
+					static function ( $v ) {
+						return is_array( $v ) ? array_map( 'sanitize_text_field', $v ) : sanitize_text_field( $v ); },
+					$meta
+				) : array();
+				$work_title   = isset( $meta['_andw_work_title'] ) ? sanitize_text_field( $meta['_andw_work_title'] ) : '';
+				$work_content = isset( $meta['_andw_work_content'] ) ? wp_kses_post( $meta['_andw_work_content'] ) : '';
+			}
+		}
+
+		// 3. 最終手段: データベースから取得（キャッシュクリア後）
+		if ( empty( $work_title ) && empty( $work_content ) ) {
+			wp_cache_delete( $post_id, 'post_meta' );
+			clean_post_cache( $post_id );
+
+			// 短時間待機してメタデータ保存の完了を待つ
+			usleep( 200000 ); // 0.2秒待機
+
+			$work_title   = get_post_meta( $post_id, '_andw_work_title', true );
+			$work_content = get_post_meta( $post_id, '_andw_work_content', true );
+		}
+
+		// データのクリーニング
+		$work_title   = trim( wp_strip_all_tags( $work_title, true ) );
+		$work_content = trim( wp_strip_all_tags( $work_content, true ) );
+
+		if ( defined( 'WP_DEBUG_LOG' ) && WP_DEBUG_LOG ) {
+			andw_log( 'FINAL_CREATE] === wp_after_insert_post実行 ===' );
+			andw_log( 'FINAL_CREATE] Post ID: ' . $post_id . ', Update: ' . ( $update ? 'true' : 'false' ) );
+			andw_log( 'FINAL_CREATE] REST: ' . ( defined( 'REST_REQUEST' ) && REST_REQUEST ? 'true' : 'false' ) );
+			andw_log( 'FINAL_CREATE] Retrieved work_title: "' . $work_title . '", work_content: "' . $work_content . '"' );
+		}
+
+		// 作業メモ関連のメタデータがない場合はスキップ
+		if ( empty( $work_title ) && empty( $work_content ) ) {
+			if ( defined( 'WP_DEBUG_LOG' ) && WP_DEBUG_LOG ) {
+				andw_log( 'FINAL_CREATE] No work meta found, skipping' );
+			}
+			return;
+		}
+
+		// === 改善された重複チェック ===
+
+		// 1. 短時間内の重複実行を防ぐ
+		$execution_key = 'andw_execution_' . $post_id . '_' . md5( $work_title . $work_content );
+		if ( get_transient( $execution_key ) ) {
+			if ( defined( 'WP_DEBUG_LOG' ) && WP_DEBUG_LOG ) {
+				andw_log( 'FINAL_CREATE] SKIP: Same content execution within last 5 seconds' );
+			}
+			return;
+		}
+		set_transient( $execution_key, time(), 5 ); // 5秒間のロック
+
+		// 2. 既存の作業メモCPTをすべて取得して詳細比較: meta_queryで最終チェック
+		// Plugin Check緩和: 推奨 INDEX(meta_key, meta_value) for _andw_bound_post_id
+		$args           = array(
+			'post_type'      => self::CPT,
+			'posts_per_page' => -1,
+			'orderby'        => 'date',
+			'order'          => 'DESC',
+			'meta_query'     => array( // phpcs:ignore WordPress.DB.SlowDBQuery.slow_db_query_meta_query -- 管理画面のフィルタ用途
+				array(
+					'key'     => '_andw_bound_post_id',
+					'value'   => $post_id,
+					'compare' => '=',
+					'type'    => 'CHAR',
+				),
+			),
+		);
+		$existing_ids   = andw_cached_ids_query( $args, 60 );
+		$existing_notes = ! empty( $existing_ids ) ? get_posts(
+			array(
+				'post__in'  => $existing_ids,
+				'orderby'   => 'post__in',
+				'post_type' => self::CPT,
+			)
+		) : array();
+
+		// 3. 最新のCPTと比較（内容の正規化を行って比較）
+		if ( ! empty( $existing_notes ) ) {
+			foreach ( $existing_notes as $existing_note ) {
+				$existing_title   = trim( wp_strip_all_tags( get_post_field( 'post_title', $existing_note->ID ), true ) );
+				$existing_content = trim( wp_strip_all_tags( get_post_field( 'post_content', $existing_note->ID ), true ) );
+
+				// 正規化して比較
+				if ( $existing_title === $work_title && $existing_content === $work_content ) {
+					if ( defined( 'WP_DEBUG_LOG' ) && WP_DEBUG_LOG ) {
+						andw_log( 'FINAL_CREATE] SKIP: Identical content found in existing CPT #' . $existing_note->ID );
+					}
+					return;
+				}
+			}
+
+			// 作成数の制限チェック（同一投稿に対して10個以上は作成しない）
+			if ( count( $existing_notes ) >= 10 ) {
+				if ( defined( 'WP_DEBUG_LOG' ) && WP_DEBUG_LOG ) {
+					andw_log( 'FINAL_CREATE] SKIP: Too many work notes (' . count( $existing_notes ) . ') for post #' . $post_id );
+				}
+				return;
+			}
+		}
+
+		// 新しい作業メモCPTを作成
+		$note_title   = ! empty( $work_title ) ? sanitize_text_field( $work_title ) : '作業メモ ' . current_time( 'Y-m-d H:i' );
+		$note_content = ! empty( $work_content ) ? wp_kses_post( $work_content ) : '';
+
+		$note_id = wp_insert_post(
+			array(
+				'post_type'     => self::CPT,
+				'post_status'   => 'publish',
+				'post_title'    => $note_title,
+				'post_content'  => $note_content,
+				'post_author'   => get_current_user_id(),
+				'post_date'     => current_time( 'mysql' ),
+				'post_date_gmt' => gmdate( 'Y-m-d H:i:s' ),
+			),
+			true
+		);
+
+		if ( ! is_wp_error( $note_id ) && $note_id ) {
+			// メタデータ設定
+			$target_type = get_post_meta( $post_id, '_andw_target_type', true );
+			$requester   = get_post_meta( $post_id, '_andw_requester', true );
+			$worker      = get_post_meta( $post_id, '_andw_worker', true );
+			$status      = get_post_meta( $post_id, '_andw_status', true );
+			$work_date   = get_post_meta( $post_id, '_andw_work_date', true );
+
+			update_post_meta( $note_id, '_andw_target_type', $target_type ?: 'post' );
+			update_post_meta( $note_id, '_andw_target_id', (string) $post_id );
+			update_post_meta( $note_id, '_andw_requester', $requester );
+			update_post_meta( $note_id, '_andw_worker', $worker );
+			update_post_meta( $note_id, '_andw_status', $status ?: '依頼' );
+			update_post_meta( $note_id, '_andw_work_date', $work_date ?: current_time( 'Y-m-d' ) );
+			update_post_meta( $note_id, '_andw_bound_post_id', $post_id );
+
+			// 親投稿のCPT ID配列を更新
+			$existing_cpt_ids = get_post_meta( $post_id, '_andw_bound_cpt_ids', true );
+			if ( ! is_array( $existing_cpt_ids ) ) {
+				$existing_cpt_ids = array();
+			}
+			$existing_cpt_ids[] = $note_id;
+			update_post_meta( $post_id, '_andw_bound_cpt_ids', $existing_cpt_ids );
+			update_post_meta( $post_id, '_andw_bound_cpt_id', $note_id );
+
+			// 重複防止フラグを設定（1秒間有効・テスト用に短縮）
+			set_transient( 'andw_recent_create_' . $post_id, 1, 1 );
+
+			if ( defined( 'WP_DEBUG_LOG' ) && WP_DEBUG_LOG ) {
+				andw_log( 'FINAL_CREATE] SUCCESS: Created CPT ' . $note_id . ' with title: "' . $note_title . '"' );
+			}
+		} elseif ( defined( 'WP_DEBUG_LOG' ) && WP_DEBUG_LOG ) {
+				$error_msg = is_wp_error( $note_id ) ? $note_id->get_error_message() : 'Unknown error';
+				andw_log( 'FINAL_CREATE] FAILED: ' . $error_msg );
+		}
+	}
+
+	/**
+	 * JavaScript主導の作業メモ作成AJAXエンドポイント
+	 * 投稿保存後に確実に最新のメタデータでCPTを作成
+	 */
+	public function ajax_create_work_note() {
+		// デバッグログ: リクエスト受信
+		if ( defined( 'WP_DEBUG_LOG' ) && WP_DEBUG_LOG ) {
+			andw_log( '=== AJAX作業メモ作成リクエスト受信 ===' );
+			andw_log( '$_POST data: ' . wp_json_encode( wp_unslash( $_POST ) ) );
+		}
+
+		// ノンス検証
+		$nonce = isset( $_POST['nonce'] ) ? sanitize_text_field( wp_unslash( $_POST['nonce'] ) ) : '';
+		if ( ! wp_verify_nonce( $nonce, 'andw_create_work_note' ) ) {
+			if ( defined( 'WP_DEBUG_LOG' ) && WP_DEBUG_LOG ) {
+				andw_log( 'Nonce verification failed: received="' . $nonce . '"' );
+			}
+			wp_send_json_error( array( 'message' => __( 'セキュリティチェックに失敗しました。', 'andw-work-notes' ) ) );
+		}
+
+		// 権限チェック
+		if ( ! current_user_can( 'edit_posts' ) ) {
+			wp_send_json_error( array( 'message' => __( 'この操作を実行する権限がありません。', 'andw-work-notes' ) ) );
+		}
+
+		// パラメータ取得
+		$post_id      = intval( $_POST['post_id'] ?? 0 );
+		$work_title   = sanitize_text_field( wp_unslash( $_POST['work_title'] ?? '' ) );
+		$work_content = wp_kses_post( wp_unslash( $_POST['work_content'] ?? '' ) );
+		$requester    = sanitize_text_field( wp_unslash( $_POST['requester'] ?? '' ) );
+		$worker       = sanitize_text_field( wp_unslash( $_POST['worker'] ?? '' ) );
+		$status       = sanitize_text_field( wp_unslash( $_POST['status'] ?? '依頼' ) );
+		$work_date    = sanitize_text_field( wp_unslash( $_POST['work_date'] ?? '' ) );
+
+		if ( ! $post_id || ( ! $work_title && ! $work_content ) ) {
+			wp_send_json_error( array( 'message' => __( '必要なパラメータが不足しています。', 'andw-work-notes' ) ) );
+		}
+
+		// 権限チェック
+		if ( ! current_user_can( 'edit_post', $post_id ) ) {
+			wp_send_json_error( array( 'message' => __( 'この投稿を編集する権限がありません。', 'andw-work-notes' ) ) );
+		}
+
+		try {
+			// 重複チェック：同じ内容の作業メモが最近作成されていないか確認
+			// Plugin Check緩和: meta_queryでAJAX重複防止、推奨 INDEX 作成
+			$args           = array(
+				'post_type'      => self::CPT,
+				'posts_per_page' => 1,
+				'meta_query'     => array( // phpcs:ignore WordPress.DB.SlowDBQuery.slow_db_query_meta_query -- 管理画面のフィルタ用途
+					array(
+						'key'     => '_andw_bound_post_id',
+						'value'   => $post_id,
+						'compare' => '=',
+						'type'    => 'CHAR',
+					),
+				),
+				'orderby'        => 'date',
+				'order'          => 'DESC',
+			);
+			$existing_ids   = andw_cached_ids_query( $args, 60 );
+			$existing_notes = ! empty( $existing_ids ) ? get_posts(
+				array(
+					'post__in'  => $existing_ids,
+					'orderby'   => 'post__in',
+					'post_type' => self::CPT,
+				)
+			) : array();
+
+			// 最新のCPTと内容が同じなら重複として作成しない
+			if ( ! empty( $existing_notes ) ) {
+				$latest_note    = $existing_notes[0];
+				$latest_title   = get_post_field( 'post_title', $latest_note->ID );
+				$latest_content = get_post_field( 'post_content', $latest_note->ID );
+
+				if ( $latest_title === $work_title && $latest_content === $work_content ) {
+					wp_send_json_success(
+						array(
+							'message'   => __( '同じ内容の作業メモが既に存在します。', 'andw-work-notes' ),
+							'note_id'   => $latest_note->ID,
+							'duplicate' => true,
+						)
+					);
+					return;
+				}
+			}
+
+			// 新しい作業メモCPTを作成
+			$note_title   = ! empty( $work_title ) ? $work_title : '作業メモ ' . current_time( 'Y-m-d H:i' );
+			$note_content = ! empty( $work_content ) ? $work_content : '';
+
+			$note_id = wp_insert_post(
+				array(
+					'post_type'     => self::CPT,
+					'post_status'   => 'publish',
+					'post_title'    => $note_title,
+					'post_content'  => $note_content,
+					'post_author'   => get_current_user_id(),
+					'post_date'     => current_time( 'mysql' ),
+					'post_date_gmt' => gmdate( 'Y-m-d H:i:s' ),
+				),
+				true
+			);
+
+			if ( is_wp_error( $note_id ) ) {
+				/* translators: %1$s: error message from WordPress */
+				wp_send_json_error( array( 'message' => sprintf( __( 'CPT作成に失敗: %1$s', 'andw-work-notes' ), esc_html( $note_id->get_error_message() ) ) ) );
+			}
+
+			// CPTメタデータを設定
+			update_post_meta( $note_id, '_andw_target_type', 'post' );
+			update_post_meta( $note_id, '_andw_target_id', (string) $post_id );
+			update_post_meta( $note_id, '_andw_requester', $requester );
+			update_post_meta( $note_id, '_andw_worker', $worker );
+			update_post_meta( $note_id, '_andw_status', $status ?: '依頼' );
+			update_post_meta( $note_id, '_andw_work_date', $work_date ?: current_time( 'Y-m-d' ) );
+			update_post_meta( $note_id, '_andw_bound_post_id', $post_id );
+
+			// 親投稿のCPT ID配列を更新
+			$existing_cpt_ids = get_post_meta( $post_id, '_andw_bound_cpt_ids', true );
+			if ( ! is_array( $existing_cpt_ids ) ) {
+				$existing_cpt_ids = array();
+			}
+			$existing_cpt_ids[] = $note_id;
+			update_post_meta( $post_id, '_andw_bound_cpt_ids', $existing_cpt_ids );
+			update_post_meta( $post_id, '_andw_bound_cpt_id', $note_id );
+
+			if ( defined( 'WP_DEBUG_LOG' ) && WP_DEBUG_LOG ) {
+				andw_log( 'AJAX_CREATE] SUCCESS: Created CPT ' . $note_id . ' with title: "' . $note_title . '" via AJAX' );
+			}
+
+			wp_send_json_success(
+				array(
+					'message'      => __( '作業メモを作成しました。', 'andw-work-notes' ),
+					'note_id'      => $note_id,
+					'note_title'   => $note_title,
+					'note_content' => $note_content,
+				)
+			);
+
+		} catch ( Exception $e ) {
+			if ( defined( 'WP_DEBUG_LOG' ) && WP_DEBUG_LOG ) {
+				andw_log( 'AJAX_CREATE] ERROR: ' . $e->getMessage() );
+			}
+			/* translators: %1$s: PHP exception message */
+			wp_send_json_error( array( 'message' => sprintf( __( 'エラーが発生しました: %1$s', 'andw-work-notes' ), esc_html( $e->getMessage() ) ) ) );
+		}
+	}
 }
