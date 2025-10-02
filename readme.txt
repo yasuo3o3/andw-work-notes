@@ -3,7 +3,7 @@ Contributors: yasuo3o3
 Tags: notes, workflow, task-management, admin, gutenberg
 Requires at least: 6.0
 Tested up to: 6.8
-Stable tag: 1.0.6
+Stable tag: 1.0.7
 Requires PHP: 8.0
 License: GPL-2.0-or-later
 License URI: http://www.gnu.org/licenses/gpl-2.0.html
@@ -64,6 +64,15 @@ All work note data is automatically deleted when the plugin is uninstalled.
 3. Post edit screen with andW Work Notes display - View and add related work notes
 
 == Changelog ==
+= 1.0.7 =
+* Fixed: WordPress.org Plugin Check compliance - removed load_plugin_textdomain() for WP4.6+ auto-loading
+* Fixed: Removed all error_log() calls from production code, replaced with debug hooks
+* Fixed: Eliminated WP_List_Table direct loading, migrated to standard CPT list functionality
+* Fixed: Complete WordPress.org distribution preparation with security audit compliance
+* Fixed: Implemented one-time data migration from legacy prefixes (ofwn/of_) to unified andw prefix
+* Security: Enhanced nonce verification and capability checks across all entry points
+* Security: Implemented proper sanitization and escaping throughout the plugin
+
 = 1.0.6 =
 * Fixed: Unified all code prefixes to andw/ANDW consistently throughout the plugin
 * Fixed: Unified cache system groups and key prefixes to 'andw'
