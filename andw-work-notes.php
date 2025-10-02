@@ -36,7 +36,7 @@ function andw_log( $label, array $data = array() ) {
 		return;
 	}
 
-	$whitelist = array( 'title', 'status', 'id', 'post_id', 'requester', 'worker', 'target_type' );
+	$whitelist = array( 'title', 'status', 'id', 'post_id', 'requester', 'worker', 'target_type', 'action', 'note_id' );
 	$masked    = array();
 
 	foreach ( $data as $k => $v ) {

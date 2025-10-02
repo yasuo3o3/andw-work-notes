@@ -2317,11 +2317,11 @@ class ANDW_Work_Notes {
 	 * 投稿保存後に確実に最新のメタデータでCPTを作成
 	 */
 	public function ajax_create_work_note() {
-		// デバッグログ: リクエスト受信
-		if ( defined( 'WP_DEBUG_LOG' ) && WP_DEBUG_LOG ) {
-			andw_log( '=== AJAX作業メモ作成リクエスト受信 ===' );
-			andw_log( '$_POST data: ' . wp_json_encode( wp_unslash( $_POST ) ) );
-		}
+		// デバッグログ: リクエスト受信（安全なホワイトリスト方式）
+		andw_log( 'ajax_work_note_request_received', array(
+			'action' => isset( $_POST['action'] ) ? sanitize_key( wp_unslash( $_POST['action'] ) ) : '',
+			'note_id' => isset( $_POST['note_id'] ) ? absint( $_POST['note_id'] ) : 0,
+		) );
 
 		// ノンス検証
 		$nonce = isset( $_POST['nonce'] ) ? sanitize_text_field( wp_unslash( $_POST['nonce'] ) ) : '';
