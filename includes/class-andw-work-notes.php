@@ -2317,20 +2317,14 @@ class ANDW_Work_Notes {
 	 * 投稿保存後に確実に最新のメタデータでCPTを作成
 	 */
 	public function ajax_create_work_note() {
-		// デバッグログ: リクエスト受信（安全なホワイトリスト方式）
+		// ノンス検証（WordPress標準方式）
+		check_ajax_referer( 'andw_create_work_note', 'nonce' );
+
+		// デバッグログ: リクエスト受信（ノンス検証後の安全なログ）
 		andw_log( 'ajax_work_note_request_received', array(
 			'action' => isset( $_POST['action'] ) ? sanitize_key( wp_unslash( $_POST['action'] ) ) : '',
-			'note_id' => isset( $_POST['note_id'] ) ? absint( $_POST['note_id'] ) : 0,
+			'post_id' => isset( $_POST['post_id'] ) ? absint( $_POST['post_id'] ) : 0,
 		) );
-
-		// ノンス検証
-		$nonce = isset( $_POST['nonce'] ) ? sanitize_text_field( wp_unslash( $_POST['nonce'] ) ) : '';
-		if ( ! wp_verify_nonce( $nonce, 'andw_create_work_note' ) ) {
-			if ( defined( 'WP_DEBUG_LOG' ) && WP_DEBUG_LOG ) {
-				andw_log( 'Nonce verification failed: received="' . $nonce . '"' );
-			}
-			wp_send_json_error( array( 'message' => __( 'セキュリティチェックに失敗しました。', 'andw-work-notes' ) ) );
-		}
 
 		// 権限チェック
 		if ( ! current_user_can( 'edit_posts' ) ) {
