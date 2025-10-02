@@ -52,13 +52,8 @@ function andw_log( $label, array $data = array() ) {
 		$log_message .= ' ' . wp_json_encode( $masked, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT );
 	}
 
-	if ( defined( 'WP_DEBUG_LOG' ) && WP_DEBUG_LOG ) {
-		if ( function_exists( 'wp_debug_log' ) ) {
-			wp_debug_log( $log_message );
-		} else {
-			error_log( $log_message );
-		}
-	}
+	// デバッグフック経由で処理（本番コードからerror_log削除）
+	do_action( 'andw_debug_log', $log_message );
 }
 
 // WP_List_Table の直接読み込みは WordPress.org 審査で問題となるため削除
@@ -70,13 +65,8 @@ require_once ANDW_DIR . 'includes/class-andw-work-notes.php';
 // 自動アップデータはWP.org配布では同梱しない（.gitattributesでexport-ignore）。
 // require_once ANDW_DIR . 'includes/class-andw-updater.php';.
 
-// テキストドメイン読み込み
-add_action(
-	'plugins_loaded',
-	function () {
-		load_plugin_textdomain( 'andw-work-notes', false, dirname( plugin_basename( __FILE__ ) ) . '/languages' );
-	}
-);
+// テキストドメイン読み込み（WP4.6以降 WordPress.org 配布では自動ロードされるため削除）
+// Text Domain ヘッダと Domain Path のみで自動処理される
 
 // activate/deactivate フック.
 register_activation_hook( __FILE__, 'andw_work_notes_activate' );
@@ -120,6 +110,17 @@ add_action(
 
 // 既存データ移行（1回のみ実行）
 add_action( 'admin_init', 'andw_run_migration_once' );
+
+// デバッグログフック（WP_DEBUG時のみ有効）
+if ( defined( 'WP_DEBUG' ) && WP_DEBUG ) {
+	add_action( 'andw_debug_log', function( $message ) {
+		if ( defined( 'WP_DEBUG_LOG' ) && WP_DEBUG_LOG ) {
+			if ( function_exists( 'wp_debug_log' ) ) {
+				wp_debug_log( $message );
+			}
+		}
+	} );
+}
 
 /**
  * 既存データ移行処理（1回のみ実行）
