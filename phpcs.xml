@@ -24,7 +24,7 @@
     <properties>
       <property name="text_domain" type="array">
         <element value="andw-work-notes"/>
-      </properties>
+      </property>
     </properties>
   </rule>
 </ruleset>
